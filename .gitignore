@@ -1,0 +1,26 @@
+# secrets -- NEVER commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# dbt
+target/
+dbt_packages/
+
+# logs
+logs/
+
+# local test data
+*.parquet
+.DS_Store
+
+# Terraform
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+
+# pipeline local state (not source of truth, safe to regenerate)
+scripts/state/

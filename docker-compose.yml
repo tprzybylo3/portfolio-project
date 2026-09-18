@@ -1,0 +1,93 @@
+services:
+
+  # --- SOURCE database: simulates the e-commerce transactional system ---
+  # This is the Postgres instance the portfolio pipeline will EXTRACT from
+  # (incremental extract based on the `updated_at` watermark).
+  postgres-source:
+    image: postgres:16
+    container_name: postgres-source
+    environment:
+      POSTGRES_USER: source_user
+      POSTGRES_PASSWORD: source_password
+      POSTGRES_DB: ecommerce
+    ports:
+      - "5432:5432"        # host:container -- access from your laptop (e.g. DBeaver) on localhost:5432
+    volumes:
+      - pg_source_data:/var/lib/postgresql/data      # data survives container restarts
+      - ./sql/ddl.sql:/docker-entrypoint-initdb.d/01-ddl.sql   # Postgres runs this automatically on FIRST startup
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U source_user -d ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- Airflow METADATA database: has nothing to do with business data ---
+  # Airflow needs its own database to store DAG/task history, connections,
+  # etc. Deliberately a separate container/database from postgres-source,
+  # so the "orchestration engine" doesn't mix with the data it processes.
+  postgres-airflow:
+    image: postgres:16
+    container_name: postgres-airflow
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - pg_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # --- One-off Airflow init: creates metadata tables + admin user ---
+  # Runs ONCE per `up`, exits (exit 0), doesn't stay up as a persistent
+  # service. Without this, the webserver/scheduler would start against an
+  # empty, uninitialized database.
+  #
+  # NOTE on idempotency: `airflow users create` fails on the SECOND run
+  # (user already exists) -- `|| true` swallows that specific, expected
+  # failure so re-running `docker compose up -d` doesn't error out.
+  # `airflow db migrate` is naturally idempotent, no guard needed there.
+  airflow-init:
+    build: ./airflow-docker
+    container_name: airflow-init
+    depends_on:
+      postgres-airflow:
+        condition: service_healthy
+    environment: &airflow-common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    command: >
+      bash -c "airflow db migrate && (airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true)"
+
+  airflow-webserver:
+    build: ./airflow-docker
+    container_name: airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    ports:
+      - "8080:8080"       # Airflow UI: http://localhost:8080
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+    command: webserver
+
+  airflow-scheduler:
+    build: ./airflow-docker
+    container_name: airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+    command: scheduler
+
+volumes:
+  pg_source_data:
+  pg_airflow_data:
