@@ -88,6 +88,23 @@ services:
       - ./logs:/opt/airflow/logs
     command: scheduler
 
+  # --- Spark + Iceberg: used for the batch MERGE job into the Iceberg
+  # table (Phase 3). This container just stays alive (tail -f /dev/null)
+  # so we can `docker exec` into it to run spark-submit/pyspark scripts
+  # interactively during development -- it's a workbench, not a
+  # long-running service like the webserver/scheduler above.
+  spark-iceberg:
+    build: ./spark-docker
+    container_name: spark-iceberg
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}
+    volumes:
+      - ./scripts:/opt/spark-scripts
+    command: tail -f /dev/null
+
 volumes:
   pg_source_data:
   pg_airflow_data:
