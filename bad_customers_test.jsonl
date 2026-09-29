@@ -1,0 +1,5 @@
+{"customer_id": 9001, "first_name": "Test", "last_name": "Good", "email": "good@test.com", "country": "PL", "created_at": "2026-09-18T00:00:00Z", "updated_at": "2026-09-18T00:00:00Z"}
+{"customer_id": 9002, "first_name": "Test", "last_name": "NullEmail", "email": null, "country": "PL", "created_at": "2026-09-18T00:00:00Z", "updated_at": "2026-09-18T00:00:00Z"}
+{"customer_id": 9003, "first_name": "Test", "last_name": "Dup1", "email": "dup@test.com", "country": "PL", "created_at": "2026-09-18T00:00:00Z", "updated_at": "2026-09-18T00:00:00Z"}
+{"customer_id": 9003, "first_name": "Test", "last_name": "Dup2", "email": "dup2@test.com", "country": "PL", "created_at": "2026-09-18T00:00:00Z", "updated_at": "2026-09-18T00:00:00Z"}
+{"first_name": "Test", "last_name": "MissingCols", "email": "missing@test.com"}
