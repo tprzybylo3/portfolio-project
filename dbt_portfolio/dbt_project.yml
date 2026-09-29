@@ -1,0 +1,23 @@
+name: 'dbt_portfolio'
+version: '1.0.0'
+
+profile: 'dbt_portfolio'
+
+model-paths: ["models"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+# No snapshot-paths on purpose: SCD Type 2 for dim_customer/dim_product is
+# owned by the Spark/Iceberg layer (scripts/merge_dimensions.py) -- dbt reads
+# the already-historized tables instead of re-snapshotting them (CLAUDE.md,
+# decision 1).
+
+models:
+  dbt_portfolio:
+    staging:
+      # Thin views over the catalog-linked Iceberg tables -- no storage cost,
+      # always reflect the latest Iceberg snapshot written by Spark.
+      +materialized: view
+      +schema: staging

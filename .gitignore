@@ -24,3 +24,6 @@ terraform.tfstate.backup
 
 # pipeline local state (not source of truth, safe to regenerate)
 scripts/state/
+
+# dbt profiles -- real credentials live in ~/.dbt/profiles.yml, never in the repo
+profiles.yml
