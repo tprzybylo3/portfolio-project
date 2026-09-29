@@ -1,0 +1,364 @@
+{
+  "row_count": 51,
+  "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/dim_customer/metadata/00010-435efb37-2289-4e28-baa3-0e27150ac8aa.metadata.json",
+  "snapshot_id": "6395697598619178545",
+  "rows": [
+    {
+      "customer_id": 1,
+      "valid_from": "2026-07-17 09:13:43.586181",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "73b7e38e19b328bbe4d5cb697a5b0e1c9b46dd809a39b4d1d065b8d938c59479"
+    },
+    {
+      "customer_id": 2,
+      "valid_from": "2026-09-06 15:46:51.590418",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "c4d245b95fb2ca826253ae8773bed9d6b92b446189052fd6bce9107438c9befc"
+    },
+    {
+      "customer_id": 3,
+      "valid_from": "2026-09-15 00:55:18.591191",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "9f8f00095477999d1d3a7a07bec9ecf773faab0ec40060b096f14d94f74fe749"
+    },
+    {
+      "customer_id": 4,
+      "valid_from": "2026-07-07 11:15:47.591772",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "bf8c46109fd646c1ef868c5f6de97dc8afd998b39ba051d7cb850a5f0bd52862"
+    },
+    {
+      "customer_id": 5,
+      "valid_from": "2026-08-21 18:20:10.592330",
+      "valid_to": "2026-09-26 07:08:13.358366",
+      "is_current": false,
+      "attribute_hash": "2e897efb3c0b206dcf982346727d0340927945513c2bc398f7237f40f969708b"
+    },
+    {
+      "customer_id": 5,
+      "valid_from": "2026-09-26 07:08:13.358366",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "6782076c87422480a8f7cc19ab823d9f1700f0edf8ea3cb793683b51957e303c"
+    },
+    {
+      "customer_id": 6,
+      "valid_from": "2026-08-24 16:33:42.592775",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "e0bb67d07cd5eb6fb499b4c2752d0e34a5ffa18ad252a25737b3fbd2dae25980"
+    },
+    {
+      "customer_id": 7,
+      "valid_from": "2026-08-26 19:04:56.593342",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "23929229fb25ed1eae823ef5ba6a68029594fbfcd2f12d9b0d8f20cfa4347a0d"
+    },
+    {
+      "customer_id": 8,
+      "valid_from": "2026-09-03 22:03:15.593853",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "8b83cb551321f21098bfec6deac95364e00e7c506d6ff02881c1953e9ba04439"
+    },
+    {
+      "customer_id": 9,
+      "valid_from": "2026-07-07 23:05:55.594349",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "7d095bca63cbf8bbb993df6c3f6ea034906d02d144070cc07c0c51372893b23c"
+    },
+    {
+      "customer_id": 10,
+      "valid_from": "2026-09-07 12:22:12.594770",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "36eebd028ec5a28cfe534fb7e4c7a7c7442fa43bc9d07c0df4676d54214dcf0f"
+    },
+    {
+      "customer_id": 11,
+      "valid_from": "2026-07-13 18:22:37.595227",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "fbfe69b6da0141c4a93c9c66b12002ca8d1232131a3ab4df87b43e9ab08dd812"
+    },
+    {
+      "customer_id": 12,
+      "valid_from": "2026-07-07 13:19:12.595645",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "760967a26e167cebd94d6fda81e3fd08706103ae6cdb69122002d5de652514cf"
+    },
+    {
+      "customer_id": 13,
+      "valid_from": "2026-06-22 20:16:19.596049",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "34d5840055b2d321fcd62eb40b09ab76d871773983e4cb3c76516716f273e6f3"
+    },
+    {
+      "customer_id": 14,
+      "valid_from": "2026-07-26 12:24:17.596492",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "6bb81ba095d7605083907f60bebed9b230b92eef7deac441771ce2382c572c9a"
+    },
+    {
+      "customer_id": 15,
+      "valid_from": "2026-09-09 00:37:08.596929",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "aca05236fc86d8ccc27ad8195f13c7805dbabe528d439bc9d206b5d577ffeb7d"
+    },
+    {
+      "customer_id": 16,
+      "valid_from": "2026-07-22 03:15:13.597348",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "950c9675e83bf924f02bd9a1abe27cd73cfd917dad555e883f2a562a6ca471e6"
+    },
+    {
+      "customer_id": 17,
+      "valid_from": "2026-08-07 12:03:07.597845",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "f013ae10bc25d116829c06efed31b9f77e8f12bb6f395409bf06d20d52a892de"
+    },
+    {
+      "customer_id": 18,
+      "valid_from": "2026-09-14 09:08:31.598397",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "28bcbd61224ff0f9109237ffde7c1e3ce605ce73000855bace551cd073294195"
+    },
+    {
+      "customer_id": 19,
+      "valid_from": "2026-09-14 13:46:06.598871",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "65272e6ed33fd36d8ff840501b38a2367991cfd11f7dc1b9d6f79477b80e07f6"
+    },
+    {
+      "customer_id": 20,
+      "valid_from": "2026-09-08 08:52:31.599290",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "a853a889fc361bcb21bf6ca40c09fa1307d5156d73ca8f76d215476905bf3ace"
+    },
+    {
+      "customer_id": 21,
+      "valid_from": "2026-08-27 05:44:15.599701",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "65a127dd13107612dd12eaca7e599f162eddd970683466e4063e54d4696c677f"
+    },
+    {
+      "customer_id": 22,
+      "valid_from": "2026-08-25 21:03:42.600154",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "36b312d0436b7244e4ba304ec7fe78382bdfbeb8a7525cc5360c00095537f614"
+    },
+    {
+      "customer_id": 23,
+      "valid_from": "2026-07-30 09:38:16.600561",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "578bca4d0869a9083fa97b5b94c04f2ae2377ba11ca41411fdc4eee69f116504"
+    },
+    {
+      "customer_id": 24,
+      "valid_from": "2026-07-21 00:23:44.601022",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "c6574a20c9b7ec68eed19fbf5eecf0e608f7be75a91a4694e3b21b8a36dbbfa5"
+    },
+    {
+      "customer_id": 25,
+      "valid_from": "2026-09-14 21:22:04.601456",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "0ae03efefc0ce60b5f8a0af8df26fb22668aed95dc7bdd147c4c6298753da541"
+    },
+    {
+      "customer_id": 26,
+      "valid_from": "2026-07-24 23:24:19.601885",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "e59701d424ddce52fa3485adc30af0e08b9a5c86928432ec6cc1dc2932d4d06d"
+    },
+    {
+      "customer_id": 27,
+      "valid_from": "2026-08-29 03:52:32.602324",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "5a9110e95a0431ee7b8ef7e51f8ce5f73e4e06b18b301ead603c4664ac9d8f07"
+    },
+    {
+      "customer_id": 28,
+      "valid_from": "2026-07-09 22:45:16.602766",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "1ab975a4f33dec893b50cc095cc41282369b5ba2594e17f7560d2b2d06977fd1"
+    },
+    {
+      "customer_id": 29,
+      "valid_from": "2026-07-16 08:51:38.603111",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "4ebf8f15324cafbed01ea817b2f107e8b6fdb1e64547e9be93c7c4806b6f0d1c"
+    },
+    {
+      "customer_id": 30,
+      "valid_from": "2026-07-11 08:59:43.603464",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "ec6de5064f201301bc7129b7f78e7bb898116a04fd8737bda6997a63b82b6b8b"
+    },
+    {
+      "customer_id": 31,
+      "valid_from": "2026-07-26 13:23:43.603862",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "1ef64a834825d0115328b6dfbe1ee60382e12893780c1951f06d4faa6837891a"
+    },
+    {
+      "customer_id": 32,
+      "valid_from": "2026-08-07 17:38:56.604239",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "8b45a4843c360ee17f0bc9ef5cafcb2ff1caaa227a08afb618b867448884a1e6"
+    },
+    {
+      "customer_id": 33,
+      "valid_from": "2026-08-27 01:32:14.604662",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "8123ba96d64f68da52de4ad1098be307e1e48d4b96e8a5081c1fcd83dea67dbd"
+    },
+    {
+      "customer_id": 34,
+      "valid_from": "2026-08-04 20:28:05.605108",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "a7c74ad2b2cc4b0767c238b824abec21de83969393ed6367fbf75650daa653da"
+    },
+    {
+      "customer_id": 35,
+      "valid_from": "2026-07-22 06:06:45.605478",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "d31dd155d221b834afd5df96013a54a68d983a5ba0f8d9f055e59c559cb606e3"
+    },
+    {
+      "customer_id": 36,
+      "valid_from": "2026-08-21 10:58:11.605867",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "5544bdef69864d36c7231789e169bfb0c307a8b0b5eb42f2b6925d7b96c44b4a"
+    },
+    {
+      "customer_id": 37,
+      "valid_from": "2026-06-30 21:05:29.606245",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "ed02b726cdac5cc0eaba9ce3798ec2c1802219fb24cfa44399ecf9c942e7cc9d"
+    },
+    {
+      "customer_id": 38,
+      "valid_from": "2026-06-25 01:35:04.606662",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "03e880fc7e45026ee56ba23dc2cf529edbc10c5c62ca7906afce223afbf259ac"
+    },
+    {
+      "customer_id": 39,
+      "valid_from": "2026-09-16 20:03:28.607032",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "887d39fbebd319a1b24805094507d56adad766caa0699fb43023bf9d3a8d42a9"
+    },
+    {
+      "customer_id": 40,
+      "valid_from": "2026-07-05 19:03:06.607347",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "3218ef5bdc1f221915c55e19e61ad6a24e8efed3d1abebe15af024054404dd4f"
+    },
+    {
+      "customer_id": 41,
+      "valid_from": "2026-07-01 05:30:22.607679",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "a21e2be53f0ccaa09d18caf18adbc1f5c4178c09a5f4615825e18bb443eb7338"
+    },
+    {
+      "customer_id": 42,
+      "valid_from": "2026-09-01 23:10:04.608057",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "70fcba440282412ab90a663b08f66f5f0f0011ed6d7a511f898de67e5695820a"
+    },
+    {
+      "customer_id": 43,
+      "valid_from": "2026-07-11 16:25:06.608575",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "c918a15022d17c8a14a29049e5af80832fd12ce1f6b0d5f7cf0a5c78373ebaed"
+    },
+    {
+      "customer_id": 44,
+      "valid_from": "2026-08-07 10:26:17.609011",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "0c39f26bdbe2b3a7a2f4f0516843f234b2d2df5d1b8b2ae68d21eeb96f9834f5"
+    },
+    {
+      "customer_id": 45,
+      "valid_from": "2026-08-15 10:21:35.609454",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "81fcf5993b3c071835c2ce8ac4e1072029fc69e293dddf2e8bd859f3f1245466"
+    },
+    {
+      "customer_id": 46,
+      "valid_from": "2026-08-21 11:42:50.609756",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "93f5ef6eb8965156ad949634d0fb8b1befc45fb6f99e6a55fb95200d1cb036ed"
+    },
+    {
+      "customer_id": 47,
+      "valid_from": "2026-09-02 08:54:27.610076",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "a62a0af2b1a3d718ab342418581c3bb6136e8fd01812313738d3be346acef200"
+    },
+    {
+      "customer_id": 48,
+      "valid_from": "2026-08-27 13:29:01.610424",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "58039620d66c405c79e0ba5c41c9da5486adea90593ccedc462f78535f5727ed"
+    },
+    {
+      "customer_id": 49,
+      "valid_from": "2026-07-05 08:07:51.610807",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "2e45d20976bfa5ee42fa9ad4e726a5a9f03c8f52d0626d2fc30894fbd9b19b21"
+    },
+    {
+      "customer_id": 50,
+      "valid_from": "2026-08-15 18:52:44.611122",
+      "valid_to": null,
+      "is_current": true,
+      "attribute_hash": "29ba335e36dbb8c352d2d64de78e2ed316ad5c6b7e3000d434774ab708c143b3"
+    }
+  ]
+}
