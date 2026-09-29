@@ -1,0 +1,128 @@
+version: 2
+
+sources:
+  - name: portfolio_ecommerce
+    description: >
+      Silver layer: Iceberg tables written by Spark (scripts/merge_dimensions.py,
+      scripts/merge_facts.py), registered in AWS Glue Data Catalog and exposed
+      in Snowflake through a READ-ONLY catalog-linked database.
+    database: portfolio_ecommerce_db
+    schema: portfolio_ecommerce
+    # Glue/Iceberg identifiers are lowercase and the catalog-linked DB
+    # resolves them case-sensitively (verified: dbt test PASS=17), so schema,
+    # table and column names must be double-quoted.
+    quoting:
+      database: false
+      schema: true
+      identifier: true
+    tables:
+      - name: customer
+        description: >
+          Customers, full SCD Type 2 history maintained by Spark
+          (valid_from/valid_to/is_current, event-time based). Masking policy
+          on email and row access policy on country apply
+          (portfolio_governance.policies).
+      - name: product
+        description: Products, full SCD Type 2 history maintained by Spark (valid_from/valid_to/is_current).
+      - name: orders
+        description: Orders, upserted by Spark -- current state per order_id.
+      - name: order_items
+        description: Order lines, upserted by Spark -- current state per order_item_id.
+      - name: payments
+        description: Payments, upserted by Spark -- current state per payment_id.
+      - name: order_status_history
+        description: Append-only log of order status changes.
+
+models:
+  - name: stg_customers
+    description: >
+      Current version of each customer (is_current = TRUE from the SCD2
+      source). Full history remains in source table customer for point-in-time
+      joins. The unique test on customer_id also guards the SCD2 invariant
+      "at most one current row per key".
+    columns:
+      - name: customer_id
+        description: Business key of the customer.
+        data_tests:
+          - unique
+          - not_null
+      - name: email
+        description: Masked for roles without access (policy on the source table).
+      - name: country
+        description: Degenerate geography attribute (no separate dim_geography); row access policy applies.
+      - name: valid_from
+        description: UTC timestamp when the current version became effective.
+
+  - name: stg_products
+    description: >
+      Current version of each product (is_current = TRUE from the SCD2
+      source). Full history (e.g. past prices) remains in source table product.
+    columns:
+      - name: product_id
+        description: Business key of the product.
+        data_tests:
+          - unique
+          - not_null
+      - name: product_name
+        description: Renamed from source column name.
+      - name: stock_quantity
+        description: Renamed from source column stock_qty.
+      - name: valid_from
+        description: UTC timestamp when the current version became effective.
+
+  - name: stg_orders
+    description: One row per order with its current status.
+    columns:
+      - name: order_id
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+      - name: order_status
+        description: Renamed from source column status.
+
+  - name: stg_order_items
+    description: One row per order line.
+    columns:
+      - name: order_item_id
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+      - name: product_id
+        data_tests:
+          - not_null
+      - name: quantity
+        description: Renamed from source column qty.
+
+  - name: stg_payments
+    description: One row per payment with its current status.
+    columns:
+      - name: payment_id
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+      - name: payment_method
+        description: Renamed from source column method.
+      - name: payment_status
+        description: Renamed from source column status.
+
+  - name: stg_order_status_history
+    description: One row per order status transition (append-only).
+    columns:
+      - name: history_id
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+      - name: order_status
+        description: Renamed from source column status.

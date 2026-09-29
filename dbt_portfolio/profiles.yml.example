@@ -1,0 +1,32 @@
+# TEMPLATE ONLY -- no real values here, and never put any in this file.
+#
+# Copy to ~/.dbt/profiles.yml (outside the repo) and export the env vars
+# below, e.g. from your shell profile or a git-ignored .env:
+#
+#   DBT_SNOWFLAKE_ACCOUNT               <orgname>-<account_name>
+#   DBT_SNOWFLAKE_USER                  <dbt service user>
+#   DBT_SNOWFLAKE_PRIVATE_KEY_PATH      <absolute path to rsa_key.p8, outside the repo>
+#   DBT_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE  <only if the key is encrypted>
+#   DBT_SNOWFLAKE_ROLE                  optional, defaults to portfolio_engineer
+#   DBT_SNOWFLAKE_WAREHOUSE             <warehouse name>
+#
+# Auth is key-pair (cheat sheet 14.4) -- the recommended method for a
+# service account; no password is used anywhere.
+
+dbt_portfolio:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('DBT_SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('DBT_SNOWFLAKE_USER') }}"
+      private_key_path: "{{ env_var('DBT_SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      private_key_passphrase: "{{ env_var('DBT_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: "{{ env_var('DBT_SNOWFLAKE_ROLE', 'portfolio_engineer') }}"
+      warehouse: "{{ env_var('DBT_SNOWFLAKE_WAREHOUSE') }}"
+      # Standard (non-catalog-linked) database -- the catalog-linked
+      # portfolio_ecommerce_db is read-only, so dbt writes here.
+      database: portfolio_dbt
+      # Staging views land in <schema>_staging, i.e. dbt_dev_staging.
+      schema: dbt_dev
+      threads: 4
