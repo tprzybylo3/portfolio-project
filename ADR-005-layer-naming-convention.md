@@ -33,7 +33,8 @@ przez Plan Mode w Claude Code.
    (`fct_customer_revenue`, `fct_product_sales`), a wymiar w Gold ma sens tylko
    wzbogacony (np. `first_order_date`, łączny przychód).
 3. Zmieniamy wyłącznie nazwy tabel. Nazwy kolumn, nazwa bazy Glue
-   `portfolio_ecommerce`, ścieżki S3 i nazwy modeli `stg_*` zostają.
+   `portfolio_ecommerce` i nazwy modeli `stg_*` zostają. (Ścieżki S3 pierwotnie
+   też miały zostać, zmienione 2026-10-07, patrz „Aktualizacja” niżej.)
 
 ## Rozważane alternatywy
 
@@ -72,15 +73,38 @@ niepotrzebny.
 - **Governance jest przypięte do obiektu w katalogu, nie do danych.** Dla Snowflake
   rename w Glue to "stara tabela zniknęła, pojawiła się nowa": polityki masking/RLS
   (i granty per tabela) trzeba założyć ponownie ręcznie i przetestować.
-- Katalogi danych w S3 zachowały stare nazwy (`.../dim_customer/`). Nieszkodliwe,
-  ale przyszła tabela utworzona w Glue pod starą nazwą w domyślnej lokalizacji
-  trafiłaby do tego samego katalogu. Świadomie przyjęty koszt; przepisywanie
-  danych dla ładniejszych ścieżek nie jest warte ryzyka.
+- ~~Katalogi danych w S3 zachowały stare nazwy (`.../dim_customer/`). Świadomie
+  przyjęty koszt.~~ Nieaktualne od 2026-10-07, patrz „Aktualizacja”.
 - Starsze sekcje `PROGRESS_LOG.md`, ADR-y i ogólne przykłady w cheat sheecie
   zachowują stare nazwy jako zapis stanu z tamtego czasu.
+
+## Aktualizacja 2026-10-07: przeniesienie ścieżek S3
+
+**Zmiana decyzji:** ścieżki S3 zostały dopasowane do nazw tabel
+(`.../portfolio_ecommerce.db/customer/` zamiast `.../dim_customer/` itd.).
+Rozjazd nazwy w katalogu i katalogu w S3 okazał się realnym kosztem przy
+nawigacji po buckecie, a zrobienie tego przed Fazą 6 (Airflow) oznacza, że DAG
+od początku działa na ostatecznym układzie.
+
+**Metoda:** `rewrite_table_path` (przepisanie ścieżek w metadanych) + kopia
+plików po stronie S3 + `register_table` w osobnej bazie Glue
+`portfolio_ecommerce_relocation` (niewidocznej dla Snowflake, bo rola catalog
+integration ma uprawnienia tylko do `portfolio_ecommerce`) + zamiana przez dwa
+renamy. Odrzucony CTAS: tracił historię snapshotów (w tym punkt rollbacku z
+§23) i wymagał ręcznego odtworzenia specyfikacji partycji. Pilot na `product`,
+potem pojedynczo, `customer` ostatni.
+
+**Wynik:** 6/6 tabel, wiersze, hash zawartości, snapshoty i time travel
+identyczne, zmieniła się tylko lokalizacja. Stare katalogi usunięte po
+weryfikacji. Skrypt i dowody: `scripts/repairs/2026-10-07_relocate_table_paths/`.
+
+**Odkrycie (uzupełnia konsekwencję o governance):** przeniesienie z
+zachowaniem nazwy + `ALTER ICEBERG TABLE ... REFRESH` w Snowflake **zachowuje**
+polityki i granty, bo dla Snowflake to ten sam obiekt z nowym wskaźnikiem
+metadanych. Gubi je dopiero zmiana nazwy.
 
 ## Powiązane
 
 - ADR-002 (ta sama baza Glue i bucket S3), ADR-004 (catalog integration i
   policy IAM z wildcardem `table/portfolio_ecommerce/*`, który rename nie łamie)
-- `PROGRESS_LOG.md`, sekcja 21
+- `PROGRESS_LOG.md`, sekcja 21 (rename) i 25 (przeniesienie ścieżek)

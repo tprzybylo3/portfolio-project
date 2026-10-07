@@ -840,4 +840,44 @@ Zapisane w `snowflake/phase5_gold_governance.sql`.
 
 ---
 
+## 25. Porządek w S3: ścieżki tabel Iceberg zgodne z nazwami
+
+**Trigger:** po ADR-005 tabele nazywały się `customer`, `orders` itd., ale w S3
+leżały w `dim_customer/`, `fact_orders/`. Uznane za bałagan, naprawione przed
+Fazą 6, żeby Airflow od początku działał na ostatecznym układzie. Zmiana
+decyzji z ADR-005 (dopisana tam sekcja „Aktualizacja”).
+
+**Metoda (Claude Code, Plan Mode):** `rewrite_table_path` + kopia plików S3 +
+`register_table` w tymczasowej bazie Glue `portfolio_ecommerce_relocation`
+(niewidoczna dla Snowflake: rola catalog integration ma dostęp tylko do
+`portfolio_ecommerce`, potwierdzone `SHOW SCHEMAS`) + zamiana dwoma renamami.
+CTAS odrzucony, bo gubi historię snapshotów. Pilot `product`, potem
+`order_items`, `order_status_history`, `payments`, `orders`, na końcu
+`customer` z odciętym na czas zamiany dostępem analityka.
+
+**Weryfikacja:** dla każdej tabeli wiersze, hash zawartości, snapshoty i time
+travel identyczne, zmienia się tylko lokalizacja. `customer`: 10 snapshotów,
+punkt rollbacku z §23 nadal działa. W Snowflake po każdej zamianie
+`ALTER ICEBERG TABLE ... REFRESH` (bez niego Snowflake dalej czytał stare
+metadane), obie role, `dbt build` 51/51.
+
+**Odkrycie:** polityki na `customer` przetrwały, bo nazwa się nie zmieniła.
+Rename (§21) gubił polityki, przeniesienie plików z `REFRESH` ich nie gubi.
+Doprecyzowane w `CLAUDE.md` (decyzja 6).
+
+**Błędy po drodze:**
+- `rewrite_table_path` zapisuje listę plików przez warstwę Hadoopa, a w
+  kontenerze brakowało `hadoop-aws`. Złapane przez pilota przed jakimkolwiek
+  zapisem. Pierwszy wpis w `ai/failure-log/` (ADR-003).
+- Przy okazji wyszło, że widok `stg_products` w Snowflake był sprzed Sesji 2:
+  `dbt run --select +fct_orders` nie buduje modeli spoza łańcucha martu.
+  Wniosek: po zmianach w kilku modelach pełny `dbt build`.
+
+**Sprzątanie:** usunięte wpisy `*_old_path` i baza tymczasowa w Glue, 685
+obiektów w S3 (stare katalogi i `migration-staging/`, bucket bez wersjonowania,
+więc nieodwracalnie). Przed usunięciem sprawdzone, że żadna tabela nie wskazuje
+na stare katalogi. PR #10.
+
+---
+
 *Ten plik aktualizuj po każdym większym kroku — kolejność chronologiczna, krótkie Q&A, bez kopiowania całych fragmentów rozmowy.*
