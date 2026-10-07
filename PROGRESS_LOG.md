@@ -770,14 +770,73 @@ odróżnieniu od renamu): `portfolio_analyst` widzi tylko `DE` i `***@`.
 
 **Porządek w repo:** okazało się, że Fazy 1–5 (Spark, dbt, ADR-y, `validate.py`,
 `github_extract.py`, `CLAUDE.md`, ten log) nigdy nie były zacommitowane. 6
-branchy z `main` (5 z 6 branchy budowanych na tymczasowym indeksie, bez
-ruszania katalogu roboczego), test konfliktów dla wszystkich 15 par, PR-y #1–#6 ze squash merge.
+branchy z `main` (5 z 6 branchy budowanych na tymczasowym
+indeksie, bez ruszania katalogu roboczego), test konfliktów dla wszystkich 15 par, PR-y #1–#6 ze squash merge.
 Cheat sheet i plik debugowy zostają lokalnie (`.gitignore`). `gh` zalogowany
 osobno, bez tokena pipeline'u (`GITHUB_TOKEN` z `.env` trafił do środowiska
 shella; token do ekstrakcji nie powinien mieć prawa zapisu do repo).
 
 **Status:** Silver poprawny, repo kompletne na `main`. Następny krok: Sesja 2 —
 pierwszy mart.
+
+---
+
+## 24. Faza 5 — Sesja 2: pierwszy mart `fct_orders` (Gold, Snowflake-managed Iceberg)
+
+**Zrobione (Claude Code, Plan Mode, ręczna akceptacja):**
+- `catalogs.yml` (v1, stabilny; v2 w dbt 1.12 eksperymentalny) z katalogiem
+  `gold_iceberg` → `CATALOG = 'SNOWFLAKE'`, `portfolio_gold_ext_vol`. Tabela
+  ląduje w `s3://.../gold/_dbt/dbt_dev_marts/fct_orders/`.
+- Staging `stg_customers`/`stg_products` zwraca teraz WSZYSTKIE wersje SCD2
+  (bez filtra `is_current`). Unikalność na `(klucz, valid_from)` przez
+  `dbt_utils` 1.4.1 + strażnik „najwyżej jedna wersja bieżąca” (`unique` z
+  `where: is_current`).
+- `int_customer_versions`: pierwsza wersja klienta obowiązuje od `1900-01-01`
+  (obsługa 115 zamówień sprzed pierwszej wersji z `seed.py`), połowicznie
+  otwarty przedział `[effective_from, effective_to)`, bez `email` (żadna
+  maskowana kolumna nie trafia do Gold).
+- `fct_orders` (grain: zamówienie): `country_at_order` (point-in-time) i
+  `current_country`, `gross_order_value`, `paid_amount` (tylko `completed`),
+  `refunded_amount`, `is_before_first_customer_version`.
+- Testy: m.in. ciągłość wersji (granica n = początek n+1, łapie klasę błędu z
+  §23), „dokładnie jedna wersja klienta na zamówienie”, uzgodnienie sumy
+  `gross_order_value` ze stagingiem.
+
+**Napotkany błąd (przewidziany w planie):** Iceberg w Snowflake odrzuca
+`TIMESTAMP_NTZ(9)` (domyślna precyzja Snowflake, nanosekundy) — format Iceberg
+przechowuje maksymalnie mikrosekundy. Naprawa: `::TIMESTAMP_NTZ(6)` na
+`order_date`. Bez utraty danych, bo źródło i tak ma precyzję 6.
+
+**Governance:** RLS (`country_rls` na `country_at_order`) i maska przez
+`post_hook` (tabela jest odtwarzana przy każdym `dbt run`, więc ręczny `ALTER`
+by przepadł), granty przez config `grants`. Kolejność w materializacji:
+CREATE OR REPLACE → post_hooki → granty, więc analityk nigdy nie dostaje
+SELECT na tabelę bez polityk. Celowo bez `copy_grants`.
+
+**Codex review (3 findingi):**
+- P1, przyjęty: `current_country` ujawniał kraj spoza zakresu RLS (analityk
+  widzi zamówienie z DE, ale też kraj, do którego klient się przeniósł). RLS
+  filtruje wiersze, nie chroni innych kolumn w tych wierszach. Naprawa: nowa
+  maska `country_mask` na `current_country` (analityk widzi tylko `DE`, inaczej
+  NULL).
+- P2, przyjęty: `paid_amount` nie odróżniał zwrotu od braku wpłaty → dodany
+  `refunded_amount`, poprawiony opis.
+- P2, zamknięty bez zmian: `SHOW GRANTS TO ROLE portfolio_analyst` — brak
+  dostępu do stagingu i intermediate.
+
+**Wynik końcowy:** `dbt run` 200 wierszy, testy 34/34 (cały łańcuch) i 13/13
+(mart po poprawkach). Inżynier: 200 zamówień, 115 sprzed pierwszej wersji
+klienta, 44 kraje, 0 NULL. Analityk: 10 zamówień, tylko DE. `POLICY_REFERENCES`
+potwierdza obie polityki na tabeli. Ścieżka maski zwracająca NULL nie ma
+przykładu w danych (żaden klient nie przeniósł się z DE) — zweryfikowane
+tylko podpięcie polityki.
+
+**Ręczne obiekty w Snowflake (poza dbt):** `country_mask` + APPLY dla
+`portfolio_engineer`, APPLY na `country_rls`, USAGE na `portfolio_governance`
+dla inżyniera, USAGE na `portfolio_dbt` i `dbt_dev_marts` dla analityka.
+Zapisane w `snowflake/phase5_gold_governance.sql`.
+
+**Status:** PR #8 (`1add7cd`). Pierwszy mart w Gold działa end-to-end.
 
 ---
 

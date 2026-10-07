@@ -9,8 +9,9 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
-# No snapshot-paths on purpose: SCD Type 2 for dim_customer/dim_product is
-# owned by the Spark/Iceberg layer (scripts/merge_dimensions.py) -- dbt reads
+# No snapshot-paths on purpose: SCD Type 2 for the Iceberg tables
+# customer/product (no dim_ prefix before dbt, ADR-005) is owned by the
+# Spark/Iceberg layer (scripts/merge_dimensions.py) -- dbt reads
 # the already-historized tables instead of re-snapshotting them (CLAUDE.md,
 # decision 1).
 
