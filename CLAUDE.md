@@ -31,8 +31,13 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
   on `customer`, policy objects live in `portfolio_governance.policies`
   (a separate, standard database — a catalog-linked database cannot host
   policies).
-- dbt staging exists: 6 `stg_*` views in `portfolio_dbt.dbt_dev_staging`,
-  17 tests.
+- dbt staging exists: 6 `stg_*` views in `portfolio_dbt.dbt_dev_staging`.
+  `stg_customers`/`stg_products` return ALL SCD2 versions (with `is_current`).
+- First mart exists: `fct_orders` (Snowflake-managed Iceberg via
+  `catalogs.yml` catalog `gold_iceberg`), built on `int_customer_versions`.
+  RLS (`country_rls`) and masking (`country_mask`) attached via `post_hook`,
+  analyst SELECT via `grants`. Manual Snowflake objects outside dbt:
+  `snowflake/phase5_gold_governance.sql`.
 - `customer` SCD2 dates repaired to event time (PROGRESS_LOG §23). Seed data
   still has orders dated before the customer's first version (independent
   random dates in `seed.py`) — expected, handle it in dbt, don't "fix" the source.
@@ -41,9 +46,10 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
 
 1. **SCD Type 2 stays in the Iceberg/Spark layer.** dbt does NOT run
    `dbt snapshot` on `customer`/`product` — staging models read the
-   already-historized SCD2 data directly (`WHERE is_current = true` for the
-   current state, point-in-time join on `valid_from`/`valid_to` when a fact
-   needs a historical match). Reason: avoids duplicated history and preserves
+   already-historized SCD2 data directly. Staging returns all versions;
+   downstream filters `is_current` for the current state or uses
+   `int_customer_versions` for point-in-time joins (first version effective
+   from 1900-01-01, half-open `[effective_from, effective_to)`). Reason: avoids duplicated history and preserves
    the Iceberg multi-engine value (see cheat sheet 5.3).
 2. **No separate geography dimension.** `country` stays as a degenerate
    attribute on `customer` — no hierarchy that would justify its own
@@ -57,13 +63,18 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
    `portfolio_engineer`, verified with `SYSTEM$VERIFY_EXTERNAL_VOLUME`.
 4. **Governance policies (masking/RLS) on marts**, if needed, go into
    `portfolio_governance.policies` — same pattern as Phase 4. Never create
-   governance objects inside a catalog-linked database.
+   governance objects inside a catalog-linked database. Marts are recreated on
+   every run, so attach policies via `post_hook` (before grants), never by a
+   manual `ALTER`. RLS filters rows, not other columns in those rows: any
+   column that could reveal what RLS hides needs its own mask (see
+   `current_country` / `country_mask`). Policy DDL is created manually by the
+   user; record it in `snowflake/`.
 5. **Naming by layer (ADR-005).** The `dim_`/`fct_` prefixes are reserved for
    final marts built by dbt. Tables before dbt (Iceberg) have no such prefix.
    **A Gold object is created only if it adds logic** (joins, aggregations,
    derived attributes). Do NOT create a Gold `dim_customer` that merely
    copies `stg_customers`. Marts answer business questions
-   (`fct_customer_revenue`, `fct_product_sales`, `fct_order_funnel`); a Gold
+   (built: `fct_orders`; candidates: `fct_product_sales`, `fct_order_funnel`); a Gold
    dimension is justified only when enriched (e.g. first_order_date, lifetime
    revenue, segment).
 6. **Renaming or recreating a table in Glue drops its Snowflake policies.**
@@ -87,20 +98,21 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
 - Verify assumptions about types empirically (e.g. `DESCRIBE TABLE`), don't
   rely on documentation claims. Example: source timestamps are
   `TIMESTAMP_LTZ(6)`, hence `CONVERT_TIMEZONE('UTC', col)::TIMESTAMP_NTZ`.
+- Iceberg tables accept timestamps only up to precision 6: cast every
+  timestamp in a mart to `TIMESTAMP_NTZ(6)` (staging yields NTZ(9)).
 
 ## dbt project structure
 
 ```
 dbt_portfolio/
 ├── models/
-│   ├── staging/                 # exists: stg_customers, stg_products,
-│   │   ├── stg_*.sql            # stg_orders, stg_order_items, stg_payments,
-│   │   └── schema.yml           # stg_order_status_history
-│   └── marts/                   # to build (names are examples, driven by
-│       ├── fct_customer_revenue.sql   # business questions, see decision 5)
-│       ├── fct_product_sales.sql
-│       ├── fct_order_funnel.sql
-│       └── schema.yml           # tests: unique, not_null, relationships
+│   ├── staging/                 # 6 stg_* views (SCD2 ones return all versions)
+│   ├── intermediate/            # int_customer_versions (point-in-time windows)
+│   └── marts/                   # fct_orders (Iceberg); next marts driven by
+│                                # business questions, see decision 5
+├── tests/                       # singular tests (contiguity, PIT match, reconciliation)
+├── catalogs.yml                 # gold_iceberg -> portfolio_gold_ext_vol
+├── packages.yml / package-lock.yml   # dbt_utils, pinned
 ├── dbt_project.yml
 └── profiles.yml.example         # real profiles.yml lives in ~/.dbt (never in repo)
 ```
