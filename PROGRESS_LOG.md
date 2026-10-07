@@ -740,4 +740,45 @@ external volume (`ALLOW_WRITES = TRUE`) i Sesja 2 (marty, w tym pierwszy
 
 ---
 
+## 23. Faza 5 — naprawa dat SCD2 w `customer`, porządek w repo
+
+**Wykrycie:** przed pierwszym martem zapytanie kontrolne (zamówienia wcześniejsze
+niż pierwsza wersja klienta) dało 200/200. Diagnoza: wszystkie `valid_from`
+klientów w jednym 15-minutowym oknie 26.09, a produkty rozrzucone na 24 dni.
+Przyczyna: klienci załadowani wczesną wersją skryptu, która brała czas
+przetwarzania zamiast `source.updated_at`. Późniejsza poprawka kodu nie ruszyła
+istniejących wersji, bo MERGE ich nie odwiedza. Ten sam błąd był na granicy
+wersji klienta 5 (luka ~6 min bez ważnej wersji). Błąd był niewidoczny, dopóki
+nic nie czytało tych dat. Wyszedł dopiero przy planowaniu point-in-time joinu.
+
+**Sprostowanie do sekcji 10:** jedna partycja `dim_customer` w Athenie nie
+wynikała z „testów SCD2 robionych dzisiaj”, tylko z tego błędu.
+
+**Naprawa (Claude Code, Spark):** MERGE tylko z UPDATE: pierwsze `valid_from` :=
+`MIN(created_at)` z surowych plików S3, a granica wersji klienta 5 := `updated_at`
+zdarzenia zmiany. Pilot na kliencie 5, potem 49 pozostałych. Weryfikacja: 51
+wierszy / 50 klientów / 50 bieżących bez zmian, hashe atrybutów bez zmian,
+wersje ciągłe, ponowne uruchomienie nic nie zmienia. Snapshot
+`5434959617553012471` → `6395697598619178545` (rollback możliwy). Skrypt i stany
+przed/po w `scripts/repairs/2026-09-29_customer_valid_from/`.
+
+**Weryfikacja w Snowflake:** `valid_from` od 2026-06-22 do 2026-09-26.
+Zapytanie kontrolne: 115 (rzeczywisty efekt losowych, niezależnych dat w
+`seed.py`; obsłuży go reguła w dbt). Masking i RLS przetrwały UPDATE (w
+odróżnieniu od renamu): `portfolio_analyst` widzi tylko `DE` i `***@`.
+`dbt test --select staging` → PASS=17.
+
+**Porządek w repo:** okazało się, że Fazy 1–5 (Spark, dbt, ADR-y, `validate.py`,
+`github_extract.py`, `CLAUDE.md`, ten log) nigdy nie były zacommitowane. 6
+branchy z `main` (5 z 6 branchy budowanych na tymczasowym indeksie, bez
+ruszania katalogu roboczego), test konfliktów dla wszystkich 15 par, PR-y #1–#6 ze squash merge.
+Cheat sheet i plik debugowy zostają lokalnie (`.gitignore`). `gh` zalogowany
+osobno, bez tokena pipeline'u (`GITHUB_TOKEN` z `.env` trafił do środowiska
+shella; token do ekstrakcji nie powinien mieć prawa zapisu do repo).
+
+**Status:** Silver poprawny, repo kompletne na `main`. Następny krok: Sesja 2 —
+pierwszy mart.
+
+---
+
 *Ten plik aktualizuj po każdym większym kroku — kolejność chronologiczna, krótkie Q&A, bez kopiowania całych fragmentów rozmowy.*
