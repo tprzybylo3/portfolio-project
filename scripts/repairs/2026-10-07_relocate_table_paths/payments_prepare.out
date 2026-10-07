@@ -1,0 +1,43 @@
+live: 160 rows, 1 snapshots, current 4944196932270687403
+rewrite_table_path: latest_version=00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json file_list=s3://tp-portfolio-ecommerce-raw/migration-staging/2026-10-07/payments/20261007T113037Z/file-list
+copied 81 file(s), sizes verified
+registered portfolio_ecommerce_relocation.payments: snapshot 4944196932270687403, 160 records
+verified: row_count, content_hash, current_snapshot_id, snapshot_count, snapshots, oldest_snapshot_row_count identical; all 82 referenced paths under s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments/
+{
+  "live": {
+    "table": "portfolio_ecommerce.payments",
+    "row_count": 160,
+    "content_hash": "50760137500840040743",
+    "current_snapshot_id": "4944196932270687403",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4944196932270687403",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:46:30.213"
+      }
+    ],
+    "oldest_snapshot_row_count": 160,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_payments/metadata/00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_payments"
+  },
+  "staged": {
+    "table": "portfolio_ecommerce_relocation.payments",
+    "row_count": 160,
+    "content_hash": "50760137500840040743",
+    "current_snapshot_id": "4944196932270687403",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4944196932270687403",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:46:30.213"
+      }
+    ],
+    "oldest_snapshot_row_count": 160,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments/metadata/00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments"
+  }
+}

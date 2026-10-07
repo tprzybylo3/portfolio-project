@@ -1,0 +1,43 @@
+live: 30 rows, 1 snapshots, current 5087618806580392847
+rewrite_table_path: latest_version=00001-413cb55a-58ef-4660-81c1-d11a6bf5571d.metadata.json file_list=s3://tp-portfolio-ecommerce-raw/migration-staging/2026-10-07/product/20261007T111614Z/file-list
+copied 28 file(s), sizes verified
+registered portfolio_ecommerce_relocation.product: snapshot 5087618806580392847, 30 records
+verified: row_count, content_hash, current_snapshot_id, snapshot_count, snapshots, oldest_snapshot_row_count identical; all 29 referenced paths under s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product/
+{
+  "live": {
+    "table": "portfolio_ecommerce.product",
+    "row_count": 30,
+    "content_hash": "-35856422226038845306",
+    "current_snapshot_id": "5087618806580392847",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "5087618806580392847",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:42:15.424"
+      }
+    ],
+    "oldest_snapshot_row_count": 30,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/dim_product/metadata/00001-413cb55a-58ef-4660-81c1-d11a6bf5571d.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/dim_product"
+  },
+  "staged": {
+    "table": "portfolio_ecommerce_relocation.product",
+    "row_count": 30,
+    "content_hash": "-35856422226038845306",
+    "current_snapshot_id": "5087618806580392847",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "5087618806580392847",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:42:15.424"
+      }
+    ],
+    "oldest_snapshot_row_count": 30,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product/metadata/00001-413cb55a-58ef-4660-81c1-d11a6bf5571d.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product"
+  }
+}
