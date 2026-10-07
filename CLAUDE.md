@@ -20,8 +20,8 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
 
 - 6 Iceberg tables exist and hold data, managed by Spark: `customer` and
   `product` (both full SCD Type 2), `orders`, `order_items`, `payments`,
-  `order_status_history`. (They were renamed from `dim_*`/`fact_*` — see
-  decision 5. Old S3 directories keep the old names; that is expected.)
+  `order_status_history`. (Renamed from `dim_*`/`fact_*` — see decision 5;
+  S3 directories match the names since §25.)
 - Available in Snowflake through a catalog-linked database
   `portfolio_ecommerce_db.portfolio_ecommerce` (REST/Glue catalog
   integration, **read-only** external volume).
@@ -80,7 +80,10 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
 6. **Renaming or recreating a table in Glue drops its Snowflake policies.**
    Governance is attached to the catalog object, not to the data. If a task
    involves that, stop before `dbt run` so the user can re-attach masking/RLS
-   and grants manually, then test both roles.
+   and grants manually, then test both roles. Moving a table's files while
+   keeping its name (`rewrite_table_path` + swap, PROGRESS_LOG §25) followed by
+   `ALTER ICEBERG TABLE ... REFRESH` in Snowflake keeps policies and grants;
+   still verify with `POLICY_REFERENCES`.
 
 ## Code conventions (from prior work on this project)
 
