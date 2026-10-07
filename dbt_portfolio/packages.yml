@@ -1,0 +1,5 @@
+packages:
+  # Pinned exact version: tests must not change behaviour on an unrelated
+  # `dbt deps`. Used for unique_combination_of_columns on SCD2 staging.
+  - package: dbt-labs/dbt_utils
+    version: 1.4.1

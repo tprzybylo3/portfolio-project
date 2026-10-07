@@ -1,0 +1,18 @@
+# Iceberg catalogs for dbt-written tables (catalogs.yml v1 schema -- v2 is
+# behind the USE_CATALOGS_V2 flag and marked experimental in dbt-core 1.12).
+#
+# gold_iceberg: Snowflake-managed Iceberg (CATALOG = 'SNOWFLAKE') on the
+# writable external volume (CLAUDE.md, decision 3). Models opt in with
+# catalog_name: gold_iceberg. base_location is NOT set: dbt derives
+# _dbt/<schema>/<identifier> under the volume's STORAGE_BASE_URL.
+# The name must not be SNOWFLAKE -- dbt-snowflake already registers its
+# default built-in catalog under that name.
+
+catalogs:
+  - name: gold_iceberg
+    active_write_integration: snowflake_managed_gold
+    write_integrations:
+      - name: snowflake_managed_gold
+        catalog_type: built_in
+        table_format: iceberg
+        external_volume: portfolio_gold_ext_vol

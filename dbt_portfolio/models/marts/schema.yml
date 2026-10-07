@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: >
+      One row per order with its value, completed payments and the customer's
+      country at order time (point-in-time SCD2 match) and today. Gold,
+      Snowflake-managed Iceberg table. Row access policy
+      portfolio_governance.policies.country_rls on country_at_order and
+      masking policy portfolio_governance.policies.country_mask on
+      current_country (post_hooks); SELECT granted to portfolio_analyst
+      (grants config).
+      Further guarded by singular tests
+      assert_fct_orders_one_customer_version_per_order and
+      assert_fct_orders_gross_value_reconciles.
+    columns:
+      - name: order_id
+        description: Grain of the mart.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_date
+        description: UTC order timestamp.
+        data_tests:
+          - not_null
+      - name: order_status
+        description: Current status of the order.
+      - name: country_at_order
+        description: >
+          Customer's country in the SCD2 version effective at order_date.
+          Row access policy country_rls applies.
+        data_tests:
+          - not_null
+      - name: current_country
+        description: >
+          Customer's country in the current SCD2 version. Masking policy
+          country_mask applies: portfolio_analyst sees the value only when it
+          is 'DE', otherwise NULL (RLS filters on country_at_order, so this
+          column could otherwise leak a moved customer's country).
+        data_tests:
+          - not_null
+      - name: is_before_first_customer_version
+        description: >
+          TRUE when order_date precedes the customer's first SCD2 version and
+          the match relies on the 1900-01-01 backdating rule
+          (int_customer_versions). Expected 115 of 200 on seed data.
+        data_tests:
+          - not_null
+      - name: gross_order_value
+        description: SUM(quantity * unit_price) over the order's lines; 0 if none.
+        data_tests:
+          - not_null
+      - name: paid_amount
+        description: >
+          Net settled amount: SUM(amount) of payments with status 'completed';
+          0 if none. Refunded payments are excluded (see refunded_amount),
+          failed payments are in neither column.
+        data_tests:
+          - not_null
+      - name: refunded_amount
+        description: SUM(amount) of payments with status 'refunded'; 0 if none.
+        data_tests:
+          - not_null
