@@ -21,3 +21,18 @@ models:
       # always reflect the latest Iceberg snapshot written by Spark.
       +materialized: view
       +schema: staging
+    intermediate:
+      # Reusable building blocks for marts, not exposed to analysts.
+      +materialized: view
+      +schema: intermediate
+    marts:
+      # Gold: Snowflake-managed Iceberg tables (catalogs.yml, decision 3).
+      # Recreated on every run (CREATE OR REPLACE), so grants and policies
+      # are re-applied by dbt each time -- never set copy_grants here, it
+      # would expose a recreated table before its row access policy is
+      # re-attached by the model's post_hook.
+      +materialized: table
+      +schema: marts
+      +catalog_name: gold_iceberg
+      +grants:
+        select: ['portfolio_analyst']

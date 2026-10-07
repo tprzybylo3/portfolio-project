@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: int_customer_versions
+    description: >
+      Customer SCD2 versions with effective windows for point-in-time joins
+      [effective_from, effective_to). The first version of each customer is
+      effective from 1900-01-01 so that orders dated before it (seed data
+      artefact, PROGRESS_LOG §23) still match a version. Contiguity of
+      versions is guarded by the singular test
+      assert_int_customer_versions_contiguous.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['customer_id', 'version_number']
+    columns:
+      - name: customer_id
+        description: Business key of the customer.
+        data_tests:
+          - not_null
+      - name: country
+        description: Country valid within this version's window.
+      - name: version_number
+        description: 1-based ordinal of the version per customer, ordered by valid_from.
+        data_tests:
+          - not_null
+      - name: is_first_version
+        description: TRUE for version_number = 1 (the version whose effective_from is backdated).
+      - name: effective_from
+        description: Inclusive start of the match window; 1900-01-01 for the first version, otherwise valid_from.
+        data_tests:
+          - not_null
+      - name: effective_to
+        description: Exclusive end of the match window; valid_to, or 9999-12-31 for the current version.
+        data_tests:
+          - not_null

@@ -36,39 +36,69 @@ sources:
 models:
   - name: stg_customers
     description: >
-      Current version of each customer (is_current = TRUE from the SCD2
-      source). Full history remains in source table customer for point-in-time
-      joins. The unique test on customer_id also guards the SCD2 invariant
-      "at most one current row per key".
+      All SCD2 versions of each customer, one row per (customer_id,
+      valid_from). Current state: is_current = TRUE; historical match:
+      point-in-time join on [valid_from, valid_to).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['customer_id', 'valid_from']
     columns:
       - name: customer_id
-        description: Business key of the customer.
+        description: Business key of the customer (repeats once per version).
         data_tests:
-          - unique
           - not_null
+          # SCD2 invariant: at most one current version per customer
+          - unique:
+              config:
+                where: "is_current"
       - name: email
         description: Masked for roles without access (policy on the source table).
       - name: country
         description: Degenerate geography attribute (no separate dim_geography); row access policy applies.
       - name: valid_from
-        description: UTC timestamp when the current version became effective.
+        description: UTC timestamp when this version became effective (inclusive).
+        data_tests:
+          - not_null
+      - name: valid_to
+        description: UTC timestamp when this version was superseded (exclusive); NULL for the current version.
+      - name: is_current
+        description: TRUE for the current version of the customer.
+        data_tests:
+          - not_null
 
   - name: stg_products
     description: >
-      Current version of each product (is_current = TRUE from the SCD2
-      source). Full history (e.g. past prices) remains in source table product.
+      All SCD2 versions of each product (e.g. past prices), one row per
+      (product_id, valid_from). Current state: is_current = TRUE; historical
+      match: point-in-time join on [valid_from, valid_to).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: ['product_id', 'valid_from']
     columns:
       - name: product_id
-        description: Business key of the product.
+        description: Business key of the product (repeats once per version).
         data_tests:
-          - unique
           - not_null
+          # SCD2 invariant: at most one current version per product
+          - unique:
+              config:
+                where: "is_current"
       - name: product_name
         description: Renamed from source column name.
       - name: stock_quantity
         description: Renamed from source column stock_qty.
       - name: valid_from
-        description: UTC timestamp when the current version became effective.
+        description: UTC timestamp when this version became effective (inclusive).
+        data_tests:
+          - not_null
+      - name: valid_to
+        description: UTC timestamp when this version was superseded (exclusive); NULL for the current version.
+      - name: is_current
+        description: TRUE for the current version of the product.
+        data_tests:
+          - not_null
 
   - name: stg_orders
     description: One row per order with its current status.
