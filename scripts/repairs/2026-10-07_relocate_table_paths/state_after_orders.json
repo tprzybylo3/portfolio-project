@@ -1,0 +1,32 @@
+[
+  {
+    "table": "portfolio_ecommerce.orders",
+    "row_count": 200,
+    "content_hash": "12004893484900369441",
+    "current_snapshot_id": "5518648422801708013",
+    "snapshot_count": 3,
+    "snapshots": [
+      {
+        "snapshot_id": "691946762992699259",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:36:06.65"
+      },
+      {
+        "snapshot_id": "1558224011620032815",
+        "parent_id": "691946762992699259",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:39:39.935"
+      },
+      {
+        "snapshot_id": "5518648422801708013",
+        "parent_id": "1558224011620032815",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:44:09.921"
+      }
+    ],
+    "oldest_snapshot_row_count": 200,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/orders/metadata/00003-10e85b93-4be4-477c-9dcb-f5b52db17360.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/orders"
+  }
+]

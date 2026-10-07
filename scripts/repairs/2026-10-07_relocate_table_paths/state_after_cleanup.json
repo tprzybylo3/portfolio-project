@@ -1,0 +1,176 @@
+[
+  {
+    "table": "portfolio_ecommerce.product",
+    "row_count": 30,
+    "content_hash": "-35856422226038845306",
+    "current_snapshot_id": "5087618806580392847",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "5087618806580392847",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:42:15.424"
+      }
+    ],
+    "oldest_snapshot_row_count": 30,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product/metadata/00001-413cb55a-58ef-4660-81c1-d11a6bf5571d.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product"
+  },
+  {
+    "table": "portfolio_ecommerce.order_items",
+    "row_count": 502,
+    "content_hash": "-88810742526432703250",
+    "current_snapshot_id": "8110184911818429070",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "8110184911818429070",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:45:09.733"
+      }
+    ],
+    "oldest_snapshot_row_count": 502,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_items/metadata/00001-946625bc-468e-4814-91a6-5f644543f69e.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_items"
+  },
+  {
+    "table": "portfolio_ecommerce.order_status_history",
+    "row_count": 493,
+    "content_hash": "-100803699998809549791",
+    "current_snapshot_id": "4569220124852723514",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4569220124852723514",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:47:38.414"
+      }
+    ],
+    "oldest_snapshot_row_count": 493,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_status_history/metadata/00001-7504572f-4497-4e90-acc6-cd6220626147.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_status_history"
+  },
+  {
+    "table": "portfolio_ecommerce.payments",
+    "row_count": 160,
+    "content_hash": "50760137500840040743",
+    "current_snapshot_id": "4944196932270687403",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4944196932270687403",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:46:30.213"
+      }
+    ],
+    "oldest_snapshot_row_count": 160,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments/metadata/00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments"
+  },
+  {
+    "table": "portfolio_ecommerce.orders",
+    "row_count": 200,
+    "content_hash": "12004893484900369441",
+    "current_snapshot_id": "5518648422801708013",
+    "snapshot_count": 3,
+    "snapshots": [
+      {
+        "snapshot_id": "691946762992699259",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:36:06.65"
+      },
+      {
+        "snapshot_id": "1558224011620032815",
+        "parent_id": "691946762992699259",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:39:39.935"
+      },
+      {
+        "snapshot_id": "5518648422801708013",
+        "parent_id": "1558224011620032815",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:44:09.921"
+      }
+    ],
+    "oldest_snapshot_row_count": 200,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/orders/metadata/00003-10e85b93-4be4-477c-9dcb-f5b52db17360.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/orders"
+  },
+  {
+    "table": "portfolio_ecommerce.customer",
+    "row_count": 51,
+    "content_hash": "-4892322911866929302",
+    "current_snapshot_id": "6395697598619178545",
+    "snapshot_count": 10,
+    "snapshots": [
+      {
+        "snapshot_id": "3556205263225034317",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 07:00:47.079"
+      },
+      {
+        "snapshot_id": "7782029177422380735",
+        "parent_id": "3556205263225034317",
+        "operation": "append",
+        "committed_at": "2026-09-26 07:00:55.37"
+      },
+      {
+        "snapshot_id": "3615561533584337684",
+        "parent_id": "7782029177422380735",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 07:10:20.665"
+      },
+      {
+        "snapshot_id": "5203459597001553072",
+        "parent_id": "3615561533584337684",
+        "operation": "append",
+        "committed_at": "2026-09-26 07:10:28.187"
+      },
+      {
+        "snapshot_id": "5664741718263690773",
+        "parent_id": "5203459597001553072",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 07:16:04.923"
+      },
+      {
+        "snapshot_id": "3591339262490446296",
+        "parent_id": "5664741718263690773",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:34:56.504"
+      },
+      {
+        "snapshot_id": "1096119267282388189",
+        "parent_id": "3591339262490446296",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:37:39.117"
+      },
+      {
+        "snapshot_id": "5434959617553012471",
+        "parent_id": "1096119267282388189",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:41:51.358"
+      },
+      {
+        "snapshot_id": "4538986442589481740",
+        "parent_id": "5434959617553012471",
+        "operation": "overwrite",
+        "committed_at": "2026-09-29 15:33:05.92"
+      },
+      {
+        "snapshot_id": "6395697598619178545",
+        "parent_id": "4538986442589481740",
+        "operation": "overwrite",
+        "committed_at": "2026-09-29 15:35:49.807"
+      }
+    ],
+    "oldest_snapshot_row_count": 50,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/customer/metadata/00010-435efb37-2289-4e28-baa3-0e27150ac8aa.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/customer"
+  }
+]

@@ -1,0 +1,74 @@
+[
+  {
+    "table": "portfolio_ecommerce.customer",
+    "row_count": 51,
+    "content_hash": "-4892322911866929302",
+    "current_snapshot_id": "6395697598619178545",
+    "snapshot_count": 10,
+    "snapshots": [
+      {
+        "snapshot_id": "3556205263225034317",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 07:00:47.079"
+      },
+      {
+        "snapshot_id": "7782029177422380735",
+        "parent_id": "3556205263225034317",
+        "operation": "append",
+        "committed_at": "2026-09-26 07:00:55.37"
+      },
+      {
+        "snapshot_id": "3615561533584337684",
+        "parent_id": "7782029177422380735",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 07:10:20.665"
+      },
+      {
+        "snapshot_id": "5203459597001553072",
+        "parent_id": "3615561533584337684",
+        "operation": "append",
+        "committed_at": "2026-09-26 07:10:28.187"
+      },
+      {
+        "snapshot_id": "5664741718263690773",
+        "parent_id": "5203459597001553072",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 07:16:04.923"
+      },
+      {
+        "snapshot_id": "3591339262490446296",
+        "parent_id": "5664741718263690773",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:34:56.504"
+      },
+      {
+        "snapshot_id": "1096119267282388189",
+        "parent_id": "3591339262490446296",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:37:39.117"
+      },
+      {
+        "snapshot_id": "5434959617553012471",
+        "parent_id": "1096119267282388189",
+        "operation": "overwrite",
+        "committed_at": "2026-09-26 13:41:51.358"
+      },
+      {
+        "snapshot_id": "4538986442589481740",
+        "parent_id": "5434959617553012471",
+        "operation": "overwrite",
+        "committed_at": "2026-09-29 15:33:05.92"
+      },
+      {
+        "snapshot_id": "6395697598619178545",
+        "parent_id": "4538986442589481740",
+        "operation": "overwrite",
+        "committed_at": "2026-09-29 15:35:49.807"
+      }
+    ],
+    "oldest_snapshot_row_count": 50,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/customer/metadata/00010-435efb37-2289-4e28-baa3-0e27150ac8aa.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/customer"
+  }
+]

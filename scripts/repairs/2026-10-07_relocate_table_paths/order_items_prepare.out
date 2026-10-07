@@ -1,0 +1,43 @@
+live: 502 rows, 1 snapshots, current 8110184911818429070
+rewrite_table_path: latest_version=00001-946625bc-468e-4814-91a6-5f644543f69e.metadata.json file_list=s3://tp-portfolio-ecommerce-raw/migration-staging/2026-10-07/order_items/20261007T112453Z/file-list
+copied 84 file(s), sizes verified
+registered portfolio_ecommerce_relocation.order_items: snapshot 8110184911818429070, 502 records
+verified: row_count, content_hash, current_snapshot_id, snapshot_count, snapshots, oldest_snapshot_row_count identical; all 85 referenced paths under s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_items/
+{
+  "live": {
+    "table": "portfolio_ecommerce.order_items",
+    "row_count": 502,
+    "content_hash": "-88810742526432703250",
+    "current_snapshot_id": "8110184911818429070",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "8110184911818429070",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:45:09.733"
+      }
+    ],
+    "oldest_snapshot_row_count": 502,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_order_items/metadata/00001-946625bc-468e-4814-91a6-5f644543f69e.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_order_items"
+  },
+  "staged": {
+    "table": "portfolio_ecommerce_relocation.order_items",
+    "row_count": 502,
+    "content_hash": "-88810742526432703250",
+    "current_snapshot_id": "8110184911818429070",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "8110184911818429070",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:45:09.733"
+      }
+    ],
+    "oldest_snapshot_row_count": 502,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_items/metadata/00001-946625bc-468e-4814-91a6-5f644543f69e.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_items"
+  }
+}

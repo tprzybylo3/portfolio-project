@@ -1,0 +1,39 @@
+swapped: portfolio_ecommerce.payments now at s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments/metadata/00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json
+{
+  "before": {
+    "table": "portfolio_ecommerce.payments",
+    "row_count": 160,
+    "content_hash": "50760137500840040743",
+    "current_snapshot_id": "4944196932270687403",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4944196932270687403",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:46:30.213"
+      }
+    ],
+    "oldest_snapshot_row_count": 160,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_payments/metadata/00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_payments"
+  },
+  "after": {
+    "table": "portfolio_ecommerce.payments",
+    "row_count": 160,
+    "content_hash": "50760137500840040743",
+    "current_snapshot_id": "4944196932270687403",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4944196932270687403",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:46:30.213"
+      }
+    ],
+    "oldest_snapshot_row_count": 160,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments/metadata/00001-09a673a7-cf09-49a9-9066-64ebfa726992.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/payments"
+  }
+}

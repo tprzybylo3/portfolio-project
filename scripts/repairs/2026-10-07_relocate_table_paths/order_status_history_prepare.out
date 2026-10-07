@@ -1,0 +1,43 @@
+live: 493 rows, 1 snapshots, current 4569220124852723514
+rewrite_table_path: latest_version=00001-7504572f-4497-4e90-acc6-cd6220626147.metadata.json file_list=s3://tp-portfolio-ecommerce-raw/migration-staging/2026-10-07/order_status_history/20261007T112721Z/file-list
+copied 94 file(s), sizes verified
+registered portfolio_ecommerce_relocation.order_status_history: snapshot 4569220124852723514, 493 records
+verified: row_count, content_hash, current_snapshot_id, snapshot_count, snapshots, oldest_snapshot_row_count identical; all 95 referenced paths under s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_status_history/
+{
+  "live": {
+    "table": "portfolio_ecommerce.order_status_history",
+    "row_count": 493,
+    "content_hash": "-100803699998809549791",
+    "current_snapshot_id": "4569220124852723514",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4569220124852723514",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:47:38.414"
+      }
+    ],
+    "oldest_snapshot_row_count": 493,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_order_status_history/metadata/00001-7504572f-4497-4e90-acc6-cd6220626147.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/fact_order_status_history"
+  },
+  "staged": {
+    "table": "portfolio_ecommerce_relocation.order_status_history",
+    "row_count": 493,
+    "content_hash": "-100803699998809549791",
+    "current_snapshot_id": "4569220124852723514",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "4569220124852723514",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:47:38.414"
+      }
+    ],
+    "oldest_snapshot_row_count": 493,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_status_history/metadata/00001-7504572f-4497-4e90-acc6-cd6220626147.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/order_status_history"
+  }
+}

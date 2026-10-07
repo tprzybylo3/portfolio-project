@@ -1,0 +1,20 @@
+[
+  {
+    "table": "portfolio_ecommerce.product",
+    "row_count": 30,
+    "content_hash": "-35856422226038845306",
+    "current_snapshot_id": "5087618806580392847",
+    "snapshot_count": 1,
+    "snapshots": [
+      {
+        "snapshot_id": "5087618806580392847",
+        "parent_id": null,
+        "operation": "append",
+        "committed_at": "2026-09-26 13:42:15.424"
+      }
+    ],
+    "oldest_snapshot_row_count": 30,
+    "metadata_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product/metadata/00001-413cb55a-58ef-4660-81c1-d11a6bf5571d.metadata.json",
+    "glue_location": "s3://tp-portfolio-ecommerce-raw/warehouse/portfolio_ecommerce.db/product"
+  }
+]
