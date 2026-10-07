@@ -33,6 +33,9 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
   policies).
 - dbt staging exists: 6 `stg_*` views in `portfolio_dbt.dbt_dev_staging`,
   17 tests.
+- `customer` SCD2 dates repaired to event time (PROGRESS_LOG §23). Seed data
+  still has orders dated before the customer's first version (independent
+  random dates in `seed.py`) — expected, handle it in dbt, don't "fix" the source.
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)
 
@@ -49,9 +52,9 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
    'SNOWFLAKE'`), NOT native Snowflake tables — a deliberate choice against
    vendor lock-in, while keeping full Snowflake performance/governance.
    Requires a SECOND external volume with `ALLOW_WRITES = TRUE` (separate
-   from the read-only volume from Phase 4) — this step is done manually by
-   the user in AWS/Snowflake, not by you; assume it exists under the name
-   `portfolio_gold_ext_vol` only once the user confirms it.
+   from the read-only volume from Phase 4). **Exists:** `portfolio_gold_ext_vol`
+   (`s3://tp-portfolio-ecommerce-raw/gold/`), USAGE granted to
+   `portfolio_engineer`, verified with `SYSTEM$VERIFY_EXTERNAL_VOLUME`.
 4. **Governance policies (masking/RLS) on marts**, if needed, go into
    `portfolio_governance.policies` — same pattern as Phase 4. Never create
    governance objects inside a catalog-linked database.
