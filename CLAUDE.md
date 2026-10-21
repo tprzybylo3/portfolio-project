@@ -10,11 +10,11 @@ code consistent with the rest of the project.
 Data engineering portfolio: Postgres+GitHub API → S3 (raw) → custom
 validation (`validate.py` with quarantine; Great Expectations deliberately
 deferred) → PySpark + Apache Iceberg (Glue Data Catalog) →
-Snowflake (reads Iceberg natively, RBAC/masking/RLS) → **dbt (this phase)** →
-Airflow (next phase). Full architecture and rationale:
-`project-summary-for-consultation.md`, `ADR-002`, `ADR-004`, `ADR-005`.
-Step-by-step build history with Q&A: `PROGRESS_LOG.md`. General theory with
-examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
+Snowflake (reads Iceberg natively, RBAC/masking/RLS) → dbt (done, Phase 5) →
+**Airflow (this phase, Phase 6)**. Full architecture and rationale:
+`project-summary-for-consultation.md`, `ADR-002`, `ADR-004`, `ADR-005`,
+`ADR-006`. Step-by-step build history with Q&A: `PROGRESS_LOG.md`. General
+theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
 
 ## State at the start of this phase
 
@@ -41,6 +41,11 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
 - `customer` SCD2 dates repaired to event time (PROGRESS_LOG §23). Seed data
   still has orders dated before the customer's first version (independent
   random dates in `seed.py`) — expected, handle it in dbt, don't "fix" the source.
+- Airflow image (`airflow-docker/`): `apache/airflow:2.9.0-python3.12`,
+  providers installed with the official constraints file, dbt in a separate
+  venv at `/opt/airflow/dbt_venv` (same versions as `pyproject.toml`).
+  Spark jobs are NOT in this image — they run in the existing `spark-iceberg`
+  image via `DockerOperator`.
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)
 
@@ -84,6 +89,18 @@ examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
    keeping its name (`rewrite_table_path` + swap, PROGRESS_LOG §25) followed by
    `ALTER ICEBERG TABLE ... REFRESH` in Snowflake keeps policies and grants;
    still verify with `POLICY_REFERENCES`.
+7. **Extraction window = Airflow data interval, no watermark state (ADR-006).**
+   Extract scripts take `--start`/`--end` (ISO timestamps) and filter
+   `col >= start AND col < end`. The task subtracts a 10-minute lookback from
+   `data_interval_start`; scripts never compute the overlap themselves. No
+   `scripts/state/*.json`, no Airflow Variables for watermarks. Duplicates from
+   the overlap are expected and handled by the existing dedup-before-MERGE in
+   `merge_*.py` — do not add dedup in the extract scripts. Raw S3 stays
+   append-only with `run_id` (ADR-002). GitHub per-entity rules are in ADR-006.
+8. **Scripts stay orchestrator-agnostic.** No Airflow imports in `scripts/`.
+   Connection settings (Postgres host, bucket) come from environment
+   variables with the current values as defaults, so the same script runs
+   locally (`localhost`) and inside Docker (`postgres-source`).
 
 ## Code conventions (from prior work on this project)
 

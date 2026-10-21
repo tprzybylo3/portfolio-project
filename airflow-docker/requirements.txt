@@ -1,8 +1,17 @@
-# Extra packages ADDED on top of the base apache/airflow:2.9.0 image.
-# The base image already has Airflow core -- these are the providers/
-# libraries the DAGs will need to connect to the rest of the stack.
+# Extra packages ADDED on top of the base apache/airflow image.
+# Unpinned on purpose: versions come from Airflow's official constraints
+# file (see Dockerfile), which guarantees they work with this Airflow.
 
-apache-airflow-providers-postgres==5.11.0
-apache-airflow-providers-amazon==8.24.0
-apache-airflow-providers-snowflake==5.5.0
-psycopg2-binary==2.9.9
+# DockerOperator -- runs the Spark merge jobs in the existing
+# spark-iceberg image as short-lived containers (dependency isolation:
+# Java/Spark/Iceberg jars never enter the Airflow image).
+apache-airflow-providers-docker
+
+# Pulls in boto3 (used by extract.py / github_extract.py / validate.py).
+apache-airflow-providers-amazon
+
+# Pulls in psycopg2 (used by extract.py against postgres-source).
+apache-airflow-providers-postgres
+
+# Some scripts load .env locally; harmless no-op inside the container.
+python-dotenv

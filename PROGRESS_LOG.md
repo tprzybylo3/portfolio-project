@@ -880,4 +880,54 @@ na stare katalogi. PR #10.
 
 ---
 
+## 26. Faza 6 — start (Airflow): plan, obraz Airflow, decyzja o oknie ekstrakcji
+
+**Ograniczenie czasowe:** trial Snowflake kończy się ~27.10. Faza 6 prawie nie
+zużywa kredytów (warehouse pracuje tylko w tasku dbt), więc limitem jest czas.
+Kroki 6.1–6.3 nie dotykają Snowflake.
+
+**Plan Fazy 6:** 6.1 obraz Airflow → 6.2 docker-compose (montowanie `scripts/` i
+`dbt_portfolio/`, sekrety z `.env`, `docker.sock`, nazwany obraz Sparka) → 6.3
+refaktor skryptów (config z env vars, okno `--start/--end`) → 6.4 DAG
+`ecommerce_pipeline` (`[extract_postgres, extract_github]` → `validate` →
+`merge_dimensions` → `merge_facts` → `dbt build`) → 6.5 retry z exponential
+backoff, `execution_timeout`, `on_failure_callback` → 6.6 backfill na 3 dniach →
+6.7 dokumentacja.
+
+**Decyzje architektoniczne:**
+- **Spark poza obrazem Airflow.** Obraz `spark-iceberg` ma już Javę i JAR-y
+  Iceberga/AWS. Airflow uruchamia go jako chwilowy kontener przez
+  `DockerOperator` (dependency isolation), zamiast kopiować JVM i JAR-y do
+  obrazu Airflow. Pierwotny pomysł „rozszerzyć obraz Airflow o PySpark z
+  Icebergiem” odrzucony po przeczytaniu `spark-docker/Dockerfile`.
+- **dbt w osobnym venv w obrazie Airflow** (`/opt/airflow/dbt_venv`), bo dbt i
+  Airflow pinują sprzeczne wersje wspólnych bibliotek.
+- **Okno ekstrakcji = data interval z 10-minutową zakładką, bez stanu
+  watermarku → ADR-006.** Zmienia plan z docstringu `extract.py` (§5:
+  „watermark przejdzie do Airflow Variables”). Uzasadnienie: idempotentne runy,
+  backfill bez ręcznego cofania stanu, historia okien w `dag_run`. Zakładka
+  zamyka lukę „późnego commitu” (`now()` w Postgresie = start transakcji).
+  Duplikaty z zakładki zjada istniejąca deduplikacja przed `MERGE`.
+
+**Zrobione (6.1):** `airflow-docker/Dockerfile` (`apache/airflow:2.9.0-python3.12`,
+providery z oficjalnym constraints file, dbt-core 1.12.5 + dbt-snowflake 1.12.1 w
+osobnym venv) i `requirements.txt` (providery docker/amazon/postgres bez
+pinów, wersje z constraints). Weryfikacja: build 51 s,
+`apache-airflow-providers-docker 3.9.2`, `dbt --version` → core 1.12.5, snowflake
+1.12.1. `BrokenPipeError` w outpucie to efekt `| head -2`, nie błąd.
+
+**Pytania/odpowiedzi (teoria w cheat sheecie, nowa sekcja 31):**
+- *Co znaczy „rozszerzyć PySpark o Iceberg/AWS”?* — JAR-y `iceberg-spark-runtime`
+  i `iceberg-aws-bundle` wbudowane w obraz podczas builda zamiast
+  `spark.jars.packages` (bez pobierania z Maven przy każdym tasku).
+- *Czy Airflow Variables będą trzymać okno i historię?* — nie, okno wylicza
+  Airflow z `schedule`/`start_date`, historia runów jest w `dag_run`.
+- *Jak odpalić backfill z zakładką — `-s data-5min`?* — nie, `-s/-e` wybiera
+  runy, a zakładkę dolicza task w template'cie.
+
+**Następny krok:** 6.2 (docker-compose) i 6.3 (refaktor `extract.py` na
+`--start/--end` + env vars).
+
+---
+
 *Ten plik aktualizuj po każdym większym kroku — kolejność chronologiczna, krótkie Q&A, bez kopiowania całych fragmentów rozmowy.*
