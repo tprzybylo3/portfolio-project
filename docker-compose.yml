@@ -2,7 +2,7 @@ services:
 
   # --- SOURCE database: simulates the e-commerce transactional system ---
   # This is the Postgres instance the portfolio pipeline will EXTRACT from
-  # (incremental extract based on the `updated_at` watermark).
+  # (windowed extract on `updated_at`, see ADR-006).
   postgres-source:
     image: postgres:16
     container_name: postgres-source
@@ -59,6 +59,20 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      # --- Phase 6: what the DAG's tasks need (values come from .env) ---
+      # Inside the Docker network the source DB is the service name, not
+      # localhost -- scripts read this, defaulting to localhost for laptop runs.
+      POSTGRES_SOURCE_HOST: postgres-source
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}          # read by Java SDKs (cheat sheet 23.4)
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}  # read by boto3
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      # Absolute path of this repo ON THE HOST. DockerOperator asks the host's
+      # Docker daemon to start the Spark container, and bind-mount sources are
+      # resolved by that daemon -- so they must be host paths, not
+      # /opt/airflow/... paths that only exist inside this container.
+      HOST_PROJECT_DIR: ${PWD}
     command: >
       bash -c "airflow db migrate && (airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true)"
 
@@ -74,6 +88,8 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts              # extract/validate scripts run by BashOperator
+      - ./dbt_portfolio:/opt/airflow/dbt_portfolio  # dbt project run from the dbt venv
     command: webserver
 
   airflow-scheduler:
@@ -86,6 +102,12 @@ services:
     volumes:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts
+      - ./dbt_portfolio:/opt/airflow/dbt_portfolio
+      # LocalExecutor runs tasks as subprocesses of the scheduler, so this is
+      # the container that talks to Docker: DockerOperator starts the Spark
+      # merge jobs as short-lived containers through the host's daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
     command: scheduler
 
   # --- Spark + Iceberg: used for the batch MERGE job into the Iceberg
@@ -95,6 +117,9 @@ services:
   # long-running service like the webserver/scheduler above.
   spark-iceberg:
     build: ./spark-docker
+    # Fixed image name so DockerOperator can start fresh containers from it
+    # (without this, Compose names the image after the folder/service).
+    image: portfolio-spark:latest
     container_name: spark-iceberg
     environment:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}

@@ -1,43 +1,56 @@
 """
 Incremental extract: postgres-source -> S3 raw (append-only).
 
-For each table, reads the last watermark from a local state file, pulls
-only rows newer than that watermark, writes them as JSON Lines, and
-uploads to S3 under a path partitioned by ingestion date + run_id
-(never overwriting anything -- see ADR-002).
+For each table, pulls the rows whose watermark column falls inside the
+half-open window [--start, --end), writes them as JSON Lines, and uploads
+to S3 under a path partitioned by ingestion date + run_id (never
+overwriting anything -- see ADR-002).
 
-Watermark state lives in a local JSON file for now. This is a deliberate
-placeholder: state belongs to the PIPELINE, not to postgres-source's
-schema. Once Airflow is introduced (Phase 6), this moves to Airflow
-Variables/XCom instead of a local file -- for a standalone script today,
-a local file is honest about the mechanics without over-building.
+No watermark state is stored anywhere (ADR-006). The caller decides the
+window: in Airflow it is the run's data interval, with a lookback already
+subtracted from the start by the task (the script never adds an overlap
+itself). Rows picked up twice because of that overlap -- or because a run
+is retried/backfilled -- are expected: merge_*.py deduplicates by primary
+key before MERGE, so the same window always ends in the same Silver state.
+
+Why the overlap exists at all: in Postgres now() (and DEFAULT now() on
+updated_at) is the transaction START time, not commit time. A transaction
+that starts before a run reads the table and commits after it gets an
+updated_at inside the already-processed window; without a lookback that
+row would never be extracted.
+
+The script knows nothing about Airflow. Connection settings come from
+environment variables, defaulting to the local docker-compose values, so
+the same file runs on the laptop (localhost) and inside the Airflow
+container (POSTGRES_SOURCE_HOST=postgres-source).
 
 Usage:
-    uv run python scripts/extract.py
+    uv run python scripts/extract.py --start 2026-10-05T00:00:00+00:00 --end 2026-10-06T00:00:00+00:00
+    # first full load:
+    uv run python scripts/extract.py --start 1970-01-01 --end 2026-10-07
+Timestamps without a timezone are treated as UTC.
 """
 
+import argparse
 import json
+import os
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 import boto3
 import psycopg2
 import psycopg2.extras
 
-# --- Connection settings matching docker-compose.yml ---
+# --- Connection settings: env vars, defaults match docker-compose.yml ---
 DB_CONFIG = {
-    "host": "localhost",
-    "port": 5432,
-    "dbname": "ecommerce",
-    "user": "source_user",
-    "password": "source_password",
+    "host": os.environ.get("POSTGRES_SOURCE_HOST", "localhost"),
+    "port": int(os.environ.get("POSTGRES_SOURCE_PORT", "5432")),
+    "dbname": os.environ.get("POSTGRES_SOURCE_DB", "ecommerce"),
+    "user": os.environ.get("POSTGRES_SOURCE_USER", "source_user"),
+    "password": os.environ.get("POSTGRES_SOURCE_PASSWORD", "source_password"),
 }
 
-# --- Change this to your actual bucket name if different ---
-S3_BUCKET_NAME = "tp-portfolio-ecommerce-raw"
-
-STATE_FILE = Path(__file__).parent / "state" / "watermark_state.json"
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "tp-portfolio-ecommerce-raw")
 
 # table_name -> watermark column. order_status_history uses changed_at
 # (append-only, no updated_at -- see ddl.sql / cheat sheet 19.5).
@@ -50,32 +63,35 @@ TABLES = {
     "order_status_history": "changed_at",
 }
 
-# Earliest possible watermark, used only on a table's very first run.
-EPOCH_START = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+def parse_utc_timestamp(value: str) -> datetime:
+    # Airflow passes ISO strings with an offset (2026-10-05T00:00:00+00:00);
+    # a bare date or naive timestamp typed by hand is read as UTC, so the
+    # comparison against TIMESTAMPTZ columns is never session-timezone dependent.
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def load_watermark_state() -> dict:
-    if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {}
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Extract one time window from postgres-source to S3 raw.")
+    parser.add_argument("--start", required=True, type=parse_utc_timestamp, help="window start, inclusive (ISO 8601)")
+    parser.add_argument("--end", required=True, type=parse_utc_timestamp, help="window end, exclusive (ISO 8601)")
+    args = parser.parse_args()
+    if args.start >= args.end:
+        parser.error(f"--start ({args.start.isoformat()}) must be earlier than --end ({args.end.isoformat()})")
+    return args
 
 
-def save_watermark_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2, default=str)
-
-
-def fetch_new_rows(connection, table_name: str, watermark_column: str, since: datetime) -> list[dict]:
+def fetch_window_rows(connection, table_name: str, watermark_column: str, window_start: datetime, window_end: datetime) -> list[dict]:
     with connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cursor:
         cursor.execute(
             f"""
             SELECT * FROM {table_name}
-            WHERE {watermark_column} > %s
+            WHERE {watermark_column} >= %s
+              AND {watermark_column} < %s
             ORDER BY {watermark_column}
             """,
-            (since,),
+            (window_start, window_end),
         )
         return cursor.fetchall()
 
@@ -97,42 +113,36 @@ def upload_to_s3(s3_client, table_name: str, run_id: str, jsonl_content: str) ->
     return key
 
 
-def extract_table(connection, s3_client, table_name: str, watermark_column: str, watermark_state: dict, run_id: str):
-    last_watermark_str = watermark_state.get(table_name)
-    last_watermark = datetime.fromisoformat(last_watermark_str) if last_watermark_str else EPOCH_START
+def extract_table(connection, s3_client, table_name: str, watermark_column: str, window_start: datetime, window_end: datetime, run_id: str) -> int:
+    window_rows = fetch_window_rows(connection, table_name, watermark_column, window_start, window_end)
 
-    new_rows = fetch_new_rows(connection, table_name, watermark_column, last_watermark)
+    if not window_rows:
+        print(f"  {table_name}: no rows in window")
+        return 0
 
-    if not new_rows:
-        print(f"  {table_name}: no new rows since {last_watermark.isoformat()}")
-        return
-
-    jsonl_content = rows_to_jsonl(new_rows)
+    jsonl_content = rows_to_jsonl(window_rows)
     s3_key = upload_to_s3(s3_client, table_name, run_id, jsonl_content)
-
-    new_watermark = max(row[watermark_column] for row in new_rows)
-    watermark_state[table_name] = new_watermark.isoformat()
-
-    print(f"  {table_name}: extracted {len(new_rows)} rows -> s3://{S3_BUCKET_NAME}/{s3_key}")
-    print(f"    watermark advanced to {new_watermark.isoformat()}")
+    print(f"  {table_name}: extracted {len(window_rows)} rows -> s3://{S3_BUCKET_NAME}/{s3_key}")
+    return len(window_rows)
 
 
 def main():
+    args = parse_args()
     run_id = uuid.uuid4().hex[:12]
-    print(f"Starting incremental extract, run_id={run_id}")
+    print(f"Starting extract, run_id={run_id}, window=[{args.start.isoformat()}, {args.end.isoformat()})")
 
-    watermark_state = load_watermark_state()
     connection = psycopg2.connect(**DB_CONFIG)
     s3_client = boto3.client("s3")
 
     try:
-        for table_name, watermark_column in TABLES.items():
-            extract_table(connection, s3_client, table_name, watermark_column, watermark_state, run_id)
+        total_rows = sum(
+            extract_table(connection, s3_client, table_name, watermark_column, args.start, args.end, run_id)
+            for table_name, watermark_column in TABLES.items()
+        )
     finally:
         connection.close()
 
-    save_watermark_state(watermark_state)
-    print("Done. Watermark state saved.")
+    print(f"Done. {total_rows} rows extracted across {len(TABLES)} tables.")
 
 
 if __name__ == "__main__":
