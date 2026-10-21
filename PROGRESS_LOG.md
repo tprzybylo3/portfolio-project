@@ -880,7 +880,7 @@ na stare katalogi. PR #10.
 
 ---
 
-## 26. Faza 6 — start (Airflow): plan, obraz Airflow, decyzja o oknie ekstrakcji
+## 26. Faza 6 — start (Airflow): obraz i compose, okno ekstrakcji, oba skrypty extract
 
 **Ograniczenie czasowe:** trial Snowflake kończy się ~27.10. Faza 6 prawie nie
 zużywa kredytów (warehouse pracuje tylko w tasku dbt), więc limitem jest czas.
@@ -925,8 +925,208 @@ pinów, wersje z constraints). Weryfikacja: build 51 s,
 - *Jak odpalić backfill z zakładką — `-s data-5min`?* — nie, `-s/-e` wybiera
   runy, a zakładkę dolicza task w template'cie.
 
-**Następny krok:** 6.2 (docker-compose) i 6.3 (refaktor `extract.py` na
-`--start/--end` + env vars).
+**Zrobione (6.2, 8.10):** `docker-compose.yml`: wspólne zmienne Airflow
+(`POSTGRES_SOURCE_HOST=postgres-source`, klucze AWS z `.env`, `AWS_REGION` i
+`AWS_DEFAULT_REGION`, `GITHUB_TOKEN`, `HOST_PROJECT_DIR=${PWD}` dla ścieżek
+montowania w `DockerOperator`), montowanie `scripts/` i `dbt_portfolio/` w
+webserverze i schedulerze, `docker.sock` w schedulerze (LocalExecutor wykonuje
+taski w nim), stała nazwa obrazu Sparka `portfolio-spark:latest`.
+
+**Zrobione (6.3, część 1, 8.10):** `extract.py` na `--start/--end` (okno
+`[start, end)`, daty bez strefy = UTC, walidacja start < end), config z env vars
+z obecnymi wartościami jako domyślnymi, bez pliku stanu. Test tym samym oknem
+(8.10) w dwóch środowiskach: z Maca (`uv run`) i z kontenera Airflow (`docker
+compose run`): oba 0 wierszy bez błędów, `docker.from_env().ping()` → `True`.
+Dwa uruchomienia celowo: Mac sprawdza logikę kodu, kontener sprawdza otoczenie
+(sieć, sekrety, pakiety z obrazu, montowanie). Zapis do S3 nie został jeszcze
+sprawdzony z kontenera (0 wierszy = brak `put_object`).
+
+**Odkryte 20.10 (po przerwie w pracy):** `docker compose ps -a` pokazał
+`airflow-webserver` w stanie `Exited (1)` od 29.09 i scheduler na obrazie
+oznaczonym samym `sha256:...`.
+- Webserver: padły workery gunicorna (`Some workers seem to have died`, `No
+  response from gunicorn master within 120 seconds`), najpewniej brak pamięci w
+  Docker Desktop albo uśpienie Maca. Serwisy nie mają `restart:`, więc leżał 3
+  tygodnie niezauważony.
+- Scheduler: przebudowa obrazu 7.10 przepięła nazwę na nowy obraz, a działający
+  kontener został na starym (Docker nie podmienia obrazu w działającym
+  kontenerze). Nie widział więc montowań, zmiennych ani `docker.sock` z 6.2;
+  test z 8.10 przeszedł tylko dlatego, że `docker compose run` startuje świeżą
+  kopię.
+- Naprawa: `docker compose up -d --build` (wolumeny Postgresów nietknięte).
+  Weryfikacja na działającym schedulerze: widzi `scripts/` i `dbt_portfolio/`,
+  `ping()` → `True`; webserver stabilny po kilku minutach.
+
+**Pytania/odpowiedzi (8.10 i 20.10, teoria w cheat sheecie 31.5–31.7):**
+- *Dlaczego `.env`, skoro `boto3` sam szuka roli?* — `boto3` jest używany
+  wszędzie i zawsze sprawdza po kolei: zmienne środowiskowe → `~/.aws` → rola
+  IAM. Na Macu trafia w `~/.aws`, w kontenerze w zmienne z `.env`, na produkcji
+  w rolę. `.env` nie zastępuje `boto3`, tylko wkłada klucze tam, gdzie go szuka.
+- *Pakiety: przecież to tylko `import`?* — `import` ładuje pakiet z Pythona,
+  który uruchamia skrypt. Na Macu to `.venv` z `uv.lock`, w kontenerze obraz
+  Airflow (obraz bazowy + `requirements.txt`). Ten sam kod, dwie instalacje,
+  wersje mogą się różnić. `requirements.txt` jest utrzymywany ręcznie.
+- *`airflow-init` jest jednorazowy?* — krótkotrwały, nie jednorazowy:
+  uruchamia się przy każdym `up`/`run` serwisów zależnych. Realną pracę zrobił
+  raz (faza 1), później tylko sprawdza wersję schematu (idempotentnie).
+  Zostaje w compose jako bramka startu.
+- *Dlaczego `spark-iceberg` działa stale?* — `tail -f /dev/null` + `up` startuje
+  wszystkie serwisy. Po przejęciu Sparka przez `DockerOperator` stały kontener
+  nie będzie potrzebny (do rozważenia `profiles: ["dev"]`).
+- *Dlaczego `docker compose` nie działa w innym folderze?* — szuka
+  `docker-compose.yml` w bieżącym folderze i wyżej; `docker ps` pyta silnik
+  bezpośrednio. Spoza repo: `-f <plik>` albo `-p portfolio-project`.
+
+**Plan do końca triala Snowflake (27.10; stan 20.10: $368 z $400, więc
+limitem jest czas, nie kredyty):** 20–21.10 `github_extract.py` + DAG bez dbt →
+22–23.10 task dbt i pierwszy pełny run → 24–25.10 retry, alert, backfill → 26.10
+zebranie dowodów (zrzuty Airflow/Snowflake, wyniki dbt, README), bo po 27.10
+kroku dbt na Snowflake nie da się już pokazać na żywo.
+
+**Zrobione 21.10:** PR #12 (`331777c`, squash merge w UI): obraz Airflow,
+compose, `extract.py`, ADR-006, `CLAUDE.md`. Po merge'u lokalne sprzątanie:
+`git switch main && git pull`, `git branch -D` (duże `-D`, bo po squash merge
+git nie rozpoznaje gałęzi jako zmergowanej), `git fetch --prune` usunął 11
+nieaktualnych remote-tracking branches po PR #1–#11, `git push origin --delete`
+dla gałęzi #12. Zostały tylko `main` i `origin/main`.
+
+**Zrobione (6.3, część 2, 21.10):** `github_extract.py` na `--start/--end`
+według ADR-006: `issues` z `since=start` po stronie serwera i `< end` po
+stronie klienta (okno sprzed 2008 pomija `since`, bo przy epoce GitHub zwraca
+pusty wynik); `pull_requests` od najnowszych: pomija nowsze od okna, zbiera
+okno, kończy na pierwszym starszym, a przy wyczerpaniu limitu 20 stron przed
+dojściem do początku okna wypisuje ostrzeżenie zamiast cicho zwrócić niepełne
+dane; `repositories` i `contributors` jako pełny snapshot; bez pliku stanu.
+Logika okna PR-ów sprawdzona na danych testowych przed uruchomieniem.
+Test na żywo z działającego schedulera, okno 20.10: repositories 1,
+issues 1, pull_requests 177 (strona 1 = PR-y zmienione 21.10, pominięte;
+strony 2–4 okno; bez ostrzeżenia o limicie), contributors 410. **Pierwszy
+zapis do S3 z kontenera Airflow** (klucze z `.env` działają). Tylko 1 issue,
+bo API zwraca bieżący stan: obiekt zmieniony 20.10 i ponownie 21.10 trafia do
+okna 21.10 (ograniczenie opisane w ADR-006). Dane z GitHuba zostają w raw,
+`merge_*` przetwarzają tylko tabele z Postgresa (uproszczenie z fazy 1).
+
+**Błąd w dokumentacji (mój):** aktualizacje z 20.10 (§26 i cheat sheet
+31.5–31.7) zgłosiłem jako zapisane w repo, ale do repo trafiły wersje z 7.10.
+Pliki zapisywałem pod tą samą ścieżką tymczasową co 7.10 i przy zapisie poszła
+stara kopia. Wykryte 21.10 po rozmiarach plików, naprawione 21.10 z
+weryfikacją treści w repo. Wniosek: po każdym zapisie sprawdzać treść, nie
+tylko komunikat o sukcesie.
+
+**Pytania/odpowiedzi (21.10, teoria w cheat sheecie 15.3.1 i 12):**
+- *`git switch` czy `git checkout`?* — do gałęzi to samo; `checkout` umie też
+  przywracać pliki (ryzyko utraty zmian), `switch` tylko zmienia gałąź.
+- *`fetch` czy `pull`, co daje `prune`?* — `fetch` aktualizuje tylko
+  remote-tracking branches (`origin/*`), nie rusza plików; `pull` = `fetch` +
+  merge do bieżącej gałęzi; `prune` usuwa `origin/*` gałęzi, których nie ma już
+  na GitHubie.
+- *Konektor (Fivetran/Airbyte), dlt czy własny skrypt?* — decyzja z TCO:
+  AI obniża koszt napisania, nie koszt utrzymania (zmiany API, dyżury,
+  sekrety, liczba źródeł). dlt (biblioteka do ingestion) to co innego niż DLT
+  (Delta Live Tables / Lakeflow, transformacje w Databricks).
+- *Dlaczego nie dlt w projekcie?* — chowa mechanikę, którą portfolio ma
+  pokazać, i nie teraz przed końcem triala. Plan: po 27.10 GitHub przepisany na
+  dlt obok obecnego skryptu, porównanie i ADR-007.
+
+**Zrobione (6.4, część 1, 21.10): DAG `dags/ecommerce_pipeline.py` bez dbt.**
+```
+extract_postgres ──> has_new_rows ──> validate_raw ──> merge_dimensions ──> merge_facts
+extract_github   (równolegle, kończy się na raw)
+```
+- `extract_*` i `validate_raw` przez `BashOperator` (zależności są w obrazie
+  Airflow), `merge_*` przez `DockerOperator` z obrazu `portfolio-spark:latest`
+  (Java/Spark/Iceberg tylko w obrazie Sparka); montowanie `scripts/` ze ścieżki
+  hosta (`HOST_PROJECT_DIR`), klucze AWS w `private_environment`,
+  `mount_tmp_dir=False` (Docker Desktop), `auto_remove="success"`.
+- Okna z szablonów Jinja: `extract_postgres` z 10-minutową zakładką,
+  `extract_github` bez (problem `now()` dotyczy tylko Postgresa).
+- `extract_github` bez zależności w dół: `validate.py` i `merge_*` obsługują
+  tylko tabele Postgresa, więc podpięcie pod walidację sugerowałoby
+  nieistniejącą zależność.
+- `@daily`, `start_date` 1.09 (pierwotnie 18.10, zmienione po teście, patrz
+  niżej), `catchup=False`, `max_active_runs=1` (bez nakładających się MERGE na tych
+  samych tabelach Icebergu), `default_args.depends_on_past=True` (dzień N
+  czeka na sukces lub pominięcie dnia N-1; brak cichych dziur).
+- **Bramka jakości:** `validate.py` po sprawdzeniu wszystkich tabel kończy się
+  kodem 1, jeśli cokolwiek trafiło do kwarantanny, więc task pada i `merge_*`
+  się nie uruchamia. Bucket z env var (decyzja 8).
+- **Pierwszy task TaskFlow:** `@task.short_circuit has_new_rows` czyta z XCom
+  ostatnią linię `extract.py` („Done. N rows…”, `BashOperator` sam ją
+  zapisuje); 0 wierszy = wszystko dalej oznaczone jako skipped (bez JVM, po
+  dodaniu dbt także bez kredytów Snowflake). Gdy linii nie da się odczytać,
+  nie pomija (bezpieczniej uruchomić niż zgubić dane).
+- **Znane słabości walidacji (poprawka po 27.10):** `validate.py` sprawdza
+  najnowszy plik tabeli, a nie pliki bieżącego runu (poprawka: ścieżki z
+  extract przez XCom), a `merge_*` czytają cały raw razem z wierszami
+  odrzuconymi (poprawka: pomijanie kwarantanny). Bramka zatrzymuje zły run,
+  ale nie usuwa złych wierszy z późniejszych merge'y.
+
+**Pytania/odpowiedzi (21.10, teoria w cheat sheecie 31.8–31.11):**
+- *Dlaczego `BashOperator` dla extract, a `DockerOperator` dla merge?* — o
+  operatorze decyduje, gdzie kod może działać: extract potrzebuje tylko
+  bibliotek z obrazu Airflow, merge potrzebuje Javy/Sparka/Icebergu z obrazu
+  Sparka.
+- *Po co `max_active_runs=1` i `depends_on_past`?* — pierwsze zapobiega
+  równoległym MERGE (konflikty commitów Icebergu, kilka JVM na laptopie),
+  drugie wymaga sukcesu poprzedniego dnia. Dla poprawności danych u nas
+  niekonieczne (merge czyta cały raw), ale daje gwarancję ciągłości.
+- *Dlaczego `{{ data_interval_start }}` w klamrach?* — Jinja: Airflow czyta
+  plik DAG-a co ~30 s, wartości runu wstawia dopiero przy wykonaniu taska.
+- *Dlaczego nie dev/prod jak w korpo?* — w korporacji kod jest jeden, różni się
+  konfiguracja; u nas jest jedna infrastruktura. Plan: zamockować dwa
+  środowiska (`PIPELINE_ENV`, dbt `--target dev/prod`, schematy
+  `dbt_dev_*`/`dbt_prod_*` w Snowflake) razem z taskiem dbt (6.4b).
+- *TaskFlow, TaskGroup, XCom?* — TaskFlow to sposób pisania taska (`@task` na
+  funkcji), TaskGroup to sposób układania tasków (folder w UI), XCom to mały
+  schowek w bazie Airflow na wartości między taskami (nie na dane).
+- *Czy przenieść skrypty na `@task`?* — nie: `merge_*` i tak muszą iść w
+  kontenerze Sparka, skrypty są testowalne i uruchamialne bez Airflow, a dane
+  płyną przez S3. TaskFlow tylko dla logiki orkiestracji (decyzja 9 w
+  `CLAUDE.md`). Ewentualny porządek: logika w `src/portfolio_project/`,
+  skrypty jako cienkie CLI.
+
+- *Co robi `2>&1 | grep -E ...`?* — program ma dwa strumienie: stdout (1) i
+  stderr (2); `|` przekazuje do `grep` tylko stdout, a logi Airflow idą na
+  stderr, więc `2>&1` wlewa stderr do stdout, żeby filtr objął wszystko.
+  `&&` = dalej tylko po sukcesie, `;` = dalej zawsze (cheat sheet 32.1–32.2).
+- *Co to za składnia `airflow dags test ...`?* — CLI: program, grupa,
+  komenda, argumenty, jak w `git`/`docker compose` (cheat sheet 32.3).
+- *Git po merge'u PR* (`switch` vs `checkout`, `fetch`/`pull`/`prune`,
+  remote-tracking branches, `-D` po squash) — cheat sheet 12.12.
+
+**Test 21.10, ścieżka bez danych:** `airflow dags list-import-errors` → brak
+błędów. `airflow dags test ecommerce_pipeline 2026-10-20`: `extract_postgres`
+0 wierszy, `extract_github` 580 (to samo okno dzień wcześniej dało 589, bo część
+PR-ów zmieniono ponownie i przeszły do kolejnego okna; ograniczenie z
+ADR-006), `has_new_rows` → `False`, `validate_raw` i `merge_*` pominięte.
+
+**Dwie pułapki z testu 21.10:**
+- `dags test` z datą 13.09 utworzył run **bez żadnego taska** i oznaczył go
+  jako sukces: data logiczna była przed `start_date` (18.10). Mój błąd
+  projektowy: `start_date` dobrany pod backfill 18–20.10, a dane w
+  `postgres-source` kończą się na 15.09 (seed z przeszłymi datami; najwięcej
+  zmian 11–13.09). Poprawka: `start_date` = 1.09, backfill w 6.6 na 11–13.09.
+- **Okno runu ręcznego jest inne niż runu z harmonogramu.** Harmonogram i
+  `backfill`: data logiczna D = okno `[D, D+1)`. Run ręczny (`dags test`,
+  Trigger w UI): okno `[D-1, D)`, czyli ostatnie zakończone przed D (w logu:
+  `data_interval_start=2026-09-12, data_interval_end=2026-09-13` dla D=13.09).
+  Test „za 20.10” przetwarzał więc w praktyce 19.10. Żeby przetestować 13.09
+  ręcznie, podaje się 14.09.
+
+**Test 21.10, pełny run (okno 13.09):** `airflow dags test
+ecommerce_pipeline 2026-09-14` → `data_interval` 13.09–14.09.
+`extract_postgres` 26 wierszy (customers 1, products 1, orders 4, order_items
+10, payments 4, order_status_history 7), `has_new_rows` → `True`,
+`validate_raw` 26/26 poprawnych (bramka przepuściła), `merge_dimensions` i
+`merge_facts` w kontenerach Sparka przez `DockerOperator` (~40 s każdy). Iceberg
+po MERGE: customer 51, product 30, orders 200, order_items 502, payments 160,
+order_status_history 493, **identycznie jak przed runem**: wiersze z 13.09 już
+były w Icebergu, MERGE ich nie zdublował (dowód idempotentności). DAG działa
+end-to-end Postgres → S3 → walidacja → Iceberg. Logi zdublowane (log do pliku i
+terminala w `dags test`; `DockerOperator` przekazuje logi kontenera dwa razy).
+
+**Następny krok:** commit i PR (Faza 6.3–6.4 cz. 1), potem 6.4b: task dbt
+(Snowflake), dwa środowiska (`PIPELINE_ENV`, dbt `--target`) i TaskGroup.
 
 ---
 

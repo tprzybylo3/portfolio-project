@@ -46,6 +46,12 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
   venv at `/opt/airflow/dbt_venv` (same versions as `pyproject.toml`).
   Spark jobs are NOT in this image — they run in the existing `spark-iceberg`
   image via `DockerOperator`.
+- DAG `dags/ecommerce_pipeline.py` (no dbt yet): `extract_postgres` →
+  `has_new_rows` (TaskFlow short-circuit) → `validate_raw` (quality gate: exit 1
+  on any quarantined row) → `merge_dimensions` → `merge_facts`
+  (`DockerOperator`, image `portfolio-spark:latest`); `extract_github` runs in
+  parallel and ends in raw. `@daily`, `catchup=False`, `max_active_runs=1`,
+  `depends_on_past=True`.
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)
 
@@ -101,6 +107,12 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
    Connection settings (Postgres host, bucket) come from environment
    variables with the current values as defaults, so the same script runs
    locally (`localhost`) and inside Docker (`postgres-source`).
+9. **TaskFlow (`@task`) only for orchestration logic** (skip/branch decisions,
+   run summaries, notifications), never for data processing. Data moves
+   through S3, not XCom; XCom carries only small values (counts, keys).
+10. **Environments are configuration, not code.** One codebase; `dev`/`prod`
+    differ by config (planned: `PIPELINE_ENV`, dbt `--target`, Snowflake
+    schemas). Never fork DAGs or scripts per environment.
 
 ## Code conventions (from prior work on this project)
 

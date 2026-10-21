@@ -13,17 +13,30 @@ LastModified, not by guessing run_id), validates every row, and uploads
 any failing rows to a parallel "quarantine" prefix with a machine-readable
 reason attached -- nothing is silently dropped.
 
+Quality gate (Phase 6): after ALL tables are checked (so the log shows the
+full picture), the script exits with code 1 if any row was quarantined. In
+Airflow that fails the validate_raw task, so the Spark MERGE tasks downstream
+do not run on a batch that failed validation.
+
+Known limitations (planned fix after the Snowflake trial, see PROGRESS_LOG §26):
+- validates the MOST RECENT file per table, not the files of the current run
+  (fix: extract passes the keys it wrote via XCom / --keys);
+- merge_*.py read ALL raw files, quarantined rows included, so the gate stops
+  a bad run but does not remove bad rows from later merges.
+
 Usage:
     uv run python scripts/validate.py
 """
 
 import json
+import os
+import sys
 import uuid
 from datetime import datetime, timezone
 
 import boto3
 
-S3_BUCKET_NAME = "tp-portfolio-ecommerce-raw"
+S3_BUCKET_NAME = os.environ.get("S3_BUCKET_NAME", "tp-portfolio-ecommerce-raw")
 
 # Per-table expectations. Deliberately explicit and readable over clever --
 # this is the kind of thing that gets read out loud in an interview.
@@ -136,16 +149,17 @@ def upload_quarantine(s3_client, table_name: str, run_id: str, quarantined_rows:
     return key
 
 
-def validate_table(s3_client, table_name: str, expectations: dict, run_id: str):
+def validate_table(s3_client, table_name: str, expectations: dict, run_id: str) -> int:
+    """Validates the latest file of one table; returns the number of quarantined rows."""
     source_key = find_latest_object_key(s3_client, table_name)
     if source_key is None:
         print(f"  {table_name}: nothing landed in S3 yet, skipping")
-        return
+        return 0
 
     rows = load_jsonl_from_s3(s3_client, source_key)
     if not rows:
         print(f"  {table_name}: latest file ({source_key}) is empty, nothing to validate")
-        return
+        return 0
 
     duplicate_pks = check_pk_uniqueness(rows, expectations["pk_column"])
 
@@ -168,6 +182,7 @@ def validate_table(s3_client, table_name: str, expectations: dict, run_id: str):
     if quarantine_key:
         status_line += f" -> s3://{S3_BUCKET_NAME}/{quarantine_key}"
     print(status_line)
+    return len(quarantined)
 
 
 def main():
@@ -175,10 +190,16 @@ def main():
     print(f"Starting validation run_id={run_id}")
 
     s3_client = boto3.client("s3")
-    for table_name, expectations in TABLE_EXPECTATIONS.items():
+    total_quarantined = sum(
         validate_table(s3_client, table_name, expectations, run_id)
+        for table_name, expectations in TABLE_EXPECTATIONS.items()
+    )
 
-    print("Done.")
+    if total_quarantined:
+        # Non-zero exit = failed task in Airflow = downstream MERGE does not run.
+        print(f"FAILED: {total_quarantined} row(s) quarantined -- stopping the pipeline before MERGE.")
+        sys.exit(1)
+    print("Done. All rows passed validation.")
 
 
 if __name__ == "__main__":
