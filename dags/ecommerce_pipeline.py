@@ -3,12 +3,14 @@ ecommerce_pipeline -- Phase 6 orchestration of the portfolio pipeline.
 
     [ingest]  extract_postgres ──> has_new_rows ──> validate_raw ──> [spark_merge] merge_dimensions
                                                                                  ──> merge_facts
-                                                                   ──> [dbt] dbt_build
+                                                                   ──> [dbt] dbt_source_freshness ──> dbt_build
     [ingest]  extract_github   (parallel branch, lands in raw only)
 
     has_new_rows : TaskFlow short-circuit -- 0 new rows => everything downstream
                    is SKIPPED (no JVM, later no Snowflake credits), not failed.
     validate_raw : quality gate -- any quarantined row => task fails => no MERGE.
+    dbt_source_freshness : warn-only (sources have warn_after, no error_after),
+                   so a stale source is logged, never blocks dbt_build.
 
 Window per run (ADR-006): the run's data interval [data_interval_start,
 data_interval_end), with a LOOKBACK subtracted from the start for the Postgres
@@ -59,6 +61,13 @@ SPARK_IMAGE = "portfolio-spark:latest"
 PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "dev")  # dev | prod -> dbt target (decision 10)
 DBT_BIN = "/opt/airflow/dbt_venv/bin/dbt"  # separate venv, see airflow-docker/Dockerfile
 DBT_PROJECT_DIR = "/opt/airflow/dbt_portfolio"  # bind-mounted from ./dbt_portfolio
+# Per-environment dbt flags (moves to config/<env>.yaml with the prod deployment).
+# Unit tests check SQL logic on fixed mock rows -- they belong where code changes
+# (dev/CI); prod runs only data tests, on real data.
+DBT_BUILD_FLAGS = {
+    "dev": "",
+    "prod": "--exclude-resource-type unit_test",
+}[PIPELINE_ENV]
 LOOKBACK_MINUTES = 10  # must exceed the longest write transaction in postgres-source (ADR-006)
 
 WINDOW_START = "{{ data_interval_start.isoformat() }}"
@@ -140,11 +149,18 @@ with DAG(
         merge_facts = spark_merge_task("merge_facts", "merge_facts.py")
 
     with TaskGroup("dbt") as dbt:
-        # dbt build = run + test in dependency order (a failing test stops the
-        # models downstream of it). --target follows the mocked environment.
+        # Are the Iceberg sources recent? Exit code is non-zero only on error_after
+        # (none configured) or a connection error, so this only warns.
+        dbt_source_freshness = BashOperator(
+            task_id="dbt_source_freshness",
+            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} source freshness --target {PIPELINE_ENV}",
+        )
+
+        # dbt build = unit tests + run + data tests in dependency order (a failing
+        # test stops the models downstream of it). --target follows the environment.
         dbt_build = BashOperator(
             task_id="dbt_build",
-            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {PIPELINE_ENV}",
+            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {PIPELINE_ENV} {DBT_BUILD_FLAGS}",
         )
 
     # extract_postgres.output = the last line extract.py printed (XCom), e.g.
@@ -161,4 +177,4 @@ with DAG(
     # has_new_rows(extract_postgres.output) above (passing a task's output creates
     # the dependency); stated here explicitly so the whole flow reads in one line.
     # Dimensions before facts: sequential on purpose (one JVM at a time on a laptop).
-    extract_postgres >> new_rows_gate >> validate_raw >> merge_dimensions >> merge_facts >> dbt_build
+    extract_postgres >> new_rows_gate >> validate_raw >> merge_dimensions >> merge_facts >> dbt_source_freshness >> dbt_build

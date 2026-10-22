@@ -1190,7 +1190,7 @@ PR #15. Na przyszłość: dorzucać do PR przed kliknięciem merge.
   do monitoringu w fazie 9 (np. codzienne sprawdzenie
   `SYSTEM$AUTO_REFRESH_STATUS` dla wszystkich tabel).
 
-**Pytania/odpowiedzi (22.10, cheat sheet 12.13, 25.16, 27.3, 31.13, 31.14, 32.4, 32.5):** `catalog-linked
+**Pytania/odpowiedzi (22.10, cheat sheet 12.13, 25.17, 27.3, 31.13, 31.14, 32.4, 32.5):** `catalog-linked
 database` (ikona ogniwa) vs zwykła baza dbt; widok = przepis, tabela = gotowe
 danie; co zatrzymało pipeline (dbt pomija modele zależne wewnątrz siebie,
 Airflow widzi tylko kod wyjścia taska); `airflow dags test` zapisuje naprawdę
@@ -1201,6 +1201,51 @@ prod nie odbuduje się „z raw”, bo `merge_dimensions.py` przy czytaniu wszys
 plików naraz zwinąłby historię SCD2 do najnowszej wersji); `git push` a PR,
 „ahead/behind”, `cherry-pick`; komendy `env`, `sed`, `printf >>`, `grep -l`,
 `diff`, `2>/dev/null`; `int_` = intermediate; RLS = filtr wierszy per rola.
+
+**Zrobione (22.10): testy dbt rozszerzone** (inspiracja: post z LinkedIn o
+testach dbt; cheat sheet 25.18–25.19).
+- Staging: `relationships` ×5 (każdy klucz obcy ma rodzica),
+  `accepted_values` ×4 (statusy zamówień, metody i statusy płatności),
+  `dbt_utils.expression_is_true` ×4 (`valid_to > valid_from` w SCD2,
+  `quantity > 0 AND unit_price >= 0`, `amount >= 0`), freshness na źródłach
+  `orders` i `payments` (`warn_after` 2 dni, bez `error_after`).
+- `fct_orders`: kwoty nieujemne (error) i „zapłacone + zwrócone ≤ wartość
+  zamówienia” jako `severity: warn` (klient po zwrocie może zapłacić ponownie);
+  `store_failures: true` przy regułach biznesowych.
+- Unit testy: `int_customer_versions` (okna obowiązywania wersji) i
+  `fct_orders` (statusy płatności, zamówienie bez pozycji → 0, kraj w chwili
+  zamówienia LY → FR, flaga `is_before_first_customer_version`).
+- DAG: `dbt.dbt_source_freshness` przed `dbt_build` (tylko ostrzega); w `prod`
+  `dbt build --exclude-resource-type unit_test` (słownik `DBT_BUILD_FLAGS`,
+  do przeniesienia do `config/<env>.yaml`). Cały przepływ w jednej linii
+  zależności.
+- Wynik: `dbt build --target dev` → **`PASS=68 ERROR=0`**, po dodaniu unit
+  testu `fct_orders` `--select fct_orders` → `PASS=18`; freshness `WARN` dla obu
+  źródeł (dane kończą się 15.09, oczekiwane); `list-import-errors` pusto.
+- Moja pomyłka: zakładałem, że reguła „≤ wartość zamówienia” da `WARN` na
+  danych seed; przeszła, bo seed generuje płatności zgodne z wartością
+  zamówień. Komentarz w `schema.yml` poprawiony.
+- Znane ryzyko (do 6.5): dbt startuje zaraz po `merge_facts`, a Snowflake
+  odświeża metadane Iceberga co 30 s, więc może przeczytać poprzedni snapshot.
+  Do rozważenia sensor na wersję metadanych albo `REFRESH` przed dbt.
+- Porządek w cheat sheecie: zdublowany numer 25.16 → „Bazy w Snowflake” to
+  teraz 25.17.
+
+**Pytania/odpowiedzi (22.10, cont., cheat sheet 25.18, 25.19, 31.15):**
+- *Dlaczego zależności w jednej linii i jak czytać DAG?* — `a >> b` = b po
+  sukcesie a; korzenie startują równolegle; przekazanie `.output` tworzy
+  krawędź niejawnie; TaskGroup to folder w UI, nie zależność.
+- *Dlaczego testy w dbt, a nie w Airflow?* — dbt zna modele i lineage, test
+  leży obok modelu, `build` pomija tylko zależne modele; Airflow widzi tylko
+  kod wyjścia. Testy są w DAG-u przez task `dbt_build`; ręczny run to
+  sprawdzenie w trakcie developmentu.
+- *Dlaczego dane w unit teście się nie zmieniają? Czy to tylko SCD2? Dev czy
+  prod?* — to stałe przypadki brzegowe (jak pytest); zmieniają się tylko z
+  logiką modelu. Dotyczą jednego modelu, nie tylko SCD2. Unit testy w dev/CI,
+  testy danych wszędzie, także w prod.
+- *Dlaczego tyle pozycji (18) dla jednej tabeli?* — jedna komenda; `--select
+  fct_orders` bierze model z jego testami: 1 unit test + budowa + 16 testów
+  danych, każdy to osobne tanie zapytanie, równolegle (cheat sheet 25.18).
 
 **Następny krok:** pliki konfiguracyjne `config/dev.yaml` i `config/prod.yaml`
 i wdrożenie prod (osobny Airflow w profilu Compose `prod`), potem 6.5 (retry,

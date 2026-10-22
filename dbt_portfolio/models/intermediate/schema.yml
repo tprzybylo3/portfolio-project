@@ -34,3 +34,25 @@ models:
         description: Exclusive end of the match window; valid_to, or 9999-12-31 for the current version.
         data_tests:
           - not_null
+
+# Unit test: logic checked on mocked input rows, no warehouse data involved
+# (dbt 1.8+). Runs inside `dbt build` BEFORE the model is built, so a logic
+# regression stops the model and everything downstream.
+unit_tests:
+  - name: int_customer_versions_effective_windows
+    description: >
+      First version backdated to 1900-01-01, versions numbered by valid_from,
+      a closed version ends at its valid_to, the current one at 9999-12-31,
+      and a single-version customer gets the full 1900-9999 window.
+    model: int_customer_versions
+    given:
+      - input: ref('stg_customers')
+        rows:
+          - {customer_id: 5, country: 'LY', valid_from: '2026-07-01 10:00:00', valid_to: '2026-09-26 13:00:00', is_current: false}
+          - {customer_id: 5, country: 'FR', valid_from: '2026-09-26 13:00:00', valid_to: null, is_current: true}
+          - {customer_id: 7, country: 'DE', valid_from: '2026-08-01 00:00:00', valid_to: null, is_current: true}
+    expect:
+      rows:
+        - {customer_id: 5, country: 'LY', version_number: 1, is_first_version: true,  effective_from: '1900-01-01 00:00:00', effective_to: '2026-09-26 13:00:00'}
+        - {customer_id: 5, country: 'FR', version_number: 2, is_first_version: false, effective_from: '2026-09-26 13:00:00', effective_to: '9999-12-31 00:00:00'}
+        - {customer_id: 7, country: 'DE', version_number: 1, is_first_version: true,  effective_from: '1900-01-01 00:00:00', effective_to: '9999-12-31 00:00:00'}
