@@ -1,0 +1,5 @@
+# Settings that differ per environment; the DAG reads config/<PIPELINE_ENV>.yaml.
+schedule: "0 3 * * *"   # 03:00 UTC, after dev: no concurrent MERGE on shared Iceberg tables
+dbt:
+  target: prod          # dbt_prod_* schemas
+  build_flags: "--exclude-resource-type unit_test"   # unit tests already ran in dev

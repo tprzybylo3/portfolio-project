@@ -916,14 +916,21 @@ pinów, wersje z constraints). Weryfikacja: build 51 s,
 `apache-airflow-providers-docker 3.9.2`, `dbt --version` → core 1.12.5, snowflake
 1.12.1. `BrokenPipeError` w outpucie to efekt `| head -2`, nie błąd.
 
-**Pytania/odpowiedzi (teoria w cheat sheecie, nowa sekcja 31):**
-- *Co znaczy „rozszerzyć PySpark o Iceberg/AWS”?* — JAR-y `iceberg-spark-runtime`
-  i `iceberg-aws-bundle` wbudowane w obraz podczas builda zamiast
-  `spark.jars.packages` (bez pobierania z Maven przy każdym tasku).
-- *Czy Airflow Variables będą trzymać okno i historię?* — nie, okno wylicza
-  Airflow z `schedule`/`start_date`, historia runów jest w `dag_run`.
-- *Jak odpalić backfill z zakładką — `-s data-5min`?* — nie, `-s/-e` wybiera
-  runy, a zakładkę dolicza task w template'cie.
+**Pytania z tego kroku i czego uczą** (teoria: cheat sheet 31.1–31.4):
+- **Plan mówił „rozszerzamy PySpark o Iceberg/AWS” — co to znaczy?** Spark sam
+  nie umie czytać Icebergu ani rozmawiać z Glue/S3; potrzebuje dodatkowych
+  JAR-ów (`iceberg-spark-runtime`, `iceberg-aws-bundle`). „Rozszerzyć” = wbudować
+  je w obraz przy buildzie, zamiast kazać Sparkowi pobierać je z Mavena przy
+  każdym uruchomieniu (`spark.jars.packages`). Nasz obraz Sparka już je ma,
+  dlatego Spark nie trafił do obrazu Airflow.
+- **Czy okno ekstrakcji i jego historia będą w Airflow Variables?** Nie. Airflow
+  sam wylicza okno każdego runu z `schedule` i `start_date`
+  (`data_interval_start/end`), a historia runów z ich oknami jest w bazie
+  metadanych (`dag_run`). Variables zostają na konfigurację, nie na stan.
+- **Jak zrobić backfill z zakładką — podać `-s` o 5 minut wcześniej?** Nie.
+  `-s/-e` w `airflow dags backfill` wybierają, KTÓRE dni (runy) wykonać;
+  zakładkę (10 min wstecz) dolicza sam task w szablonie komendy, więc każdy run
+  backfillu dostaje ją automatycznie.
 
 **Zrobione (6.2, 8.10):** `docker-compose.yml`: wspólne zmienne Airflow
 (`POSTGRES_SOURCE_HOST=postgres-source`, klucze AWS z `.env`, `AWS_REGION` i
@@ -957,25 +964,35 @@ oznaczonym samym `sha256:...`.
   Weryfikacja na działającym schedulerze: widzi `scripts/` i `dbt_portfolio/`,
   `ping()` → `True`; webserver stabilny po kilku minutach.
 
-**Pytania/odpowiedzi (8.10 i 20.10, teoria w cheat sheecie 31.5–31.7):**
-- *Dlaczego `.env`, skoro `boto3` sam szuka roli?* — `boto3` jest używany
-  wszędzie i zawsze sprawdza po kolei: zmienne środowiskowe → `~/.aws` → rola
-  IAM. Na Macu trafia w `~/.aws`, w kontenerze w zmienne z `.env`, na produkcji
-  w rolę. `.env` nie zastępuje `boto3`, tylko wkłada klucze tam, gdzie go szuka.
-- *Pakiety: przecież to tylko `import`?* — `import` ładuje pakiet z Pythona,
-  który uruchamia skrypt. Na Macu to `.venv` z `uv.lock`, w kontenerze obraz
-  Airflow (obraz bazowy + `requirements.txt`). Ten sam kod, dwie instalacje,
-  wersje mogą się różnić. `requirements.txt` jest utrzymywany ręcznie.
-- *`airflow-init` jest jednorazowy?* — krótkotrwały, nie jednorazowy:
-  uruchamia się przy każdym `up`/`run` serwisów zależnych. Realną pracę zrobił
-  raz (faza 1), później tylko sprawdza wersję schematu (idempotentnie).
-  Zostaje w compose jako bramka startu.
-- *Dlaczego `spark-iceberg` działa stale?* — `tail -f /dev/null` + `up` startuje
-  wszystkie serwisy. Po przejęciu Sparka przez `DockerOperator` stały kontener
-  nie będzie potrzebny (do rozważenia `profiles: ["dev"]`).
-- *Dlaczego `docker compose` nie działa w innym folderze?* — szuka
-  `docker-compose.yml` w bieżącym folderze i wyżej; `docker ps` pyta silnik
-  bezpośrednio. Spoza repo: `-f <plik>` albo `-p portfolio-project`.
+**Pytania z tych kroków i czego uczą** (teoria: cheat sheet 31.5–31.7):
+- **Po co `.env`, skoro `boto3` sam znajduje klucze?** `boto3` szuka
+  poświadczeń po kolei: zmienne środowiskowe → `~/.aws/credentials` → rola IAM
+  maszyny. Na Macu trafia w `~/.aws`, ale kontener nie widzi Twojego `~/.aws`,
+  więc `.env` wkłada klucze do zmiennych kontenera. W korporacji kluczy nie ma
+  wcale: serwer/pod dostaje rolę IAM i `boto3` trafia w nią (krok 3).
+- **Skoro skrypt robi tylko `import`, skąd biorą się pakiety?** `import` ładuje
+  pakiet z Pythona, który uruchamia skrypt, a nie go instaluje. Na Macu to
+  `.venv` (z `uv.lock`), w kontenerze obraz Airflow (`requirements.txt`, pisany
+  ręcznie, wersje z constraints Airflow). Ten sam kod, dwie instalacje, więc
+  test w obu miejscach: Mac sprawdza logikę, kontener otoczenie (sieć, sekrety,
+  pakiety, montowanie). W korporacji jedno źródło prawdy: obraz budowany w CI.
+- **`airflow-init` miał być jednorazowy, a uruchamia się przy każdym `up` — czy
+  jest potrzebny?** Jest krótkotrwały, nie jednorazowy: przy każdym starcie
+  sprawdza/migruje schemat bazy Airflow i kończy pracę; realną robotę
+  (założenie bazy, użytkownika) zrobił raz. Zostaje jako bramka: webserver i
+  scheduler czekają, aż skończy się sukcesem.
+- **Dlaczego `spark-iceberg` działa cały czas?** Ma komendę `tail -f /dev/null`
+  (nic nie robi, ale się nie kończy), a `up` startuje wszystkie serwisy. Odkąd
+  Spark uruchamia `DockerOperator` w chwilowych kontenerach, stały kontener
+  jest potrzebny tylko do ręcznej pracy.
+- **Dlaczego `docker compose` nie działa w innym folderze, a `docker ps` tak?**
+  `docker compose` szuka `docker-compose.yml` w bieżącym folderze (i wyżej), a
+  nazwa projektu pochodzi od nazwy folderu; `docker ps` pyta silnik Dockera
+  bezpośrednio o wszystkie kontenery. Spoza repo: `-f <plik>` albo `-p
+  portfolio-project`.
+- **Lekcja z 20.10:** przebudowa obrazu nie podmienia go w działającym
+  kontenerze (trzeba `up -d --build`), a serwis bez `restart:` po awarii leży
+  niezauważony.
 
 **Plan do końca triala Snowflake (27.10; stan 20.10: $368 z $400, więc
 limitem jest czas, nie kredyty):** 20–21.10 `github_extract.py` + DAG bez dbt →
@@ -1013,20 +1030,28 @@ stara kopia. Wykryte 21.10 po rozmiarach plików, naprawione 21.10 z
 weryfikacją treści w repo. Wniosek: po każdym zapisie sprawdzać treść, nie
 tylko komunikat o sukcesie.
 
-**Pytania/odpowiedzi (21.10, teoria w cheat sheecie 15.3.1 i 12):**
-- *`git switch` czy `git checkout`?* — do gałęzi to samo; `checkout` umie też
-  przywracać pliki (ryzyko utraty zmian), `switch` tylko zmienia gałąź.
-- *`fetch` czy `pull`, co daje `prune`?* — `fetch` aktualizuje tylko
-  remote-tracking branches (`origin/*`), nie rusza plików; `pull` = `fetch` +
-  merge do bieżącej gałęzi; `prune` usuwa `origin/*` gałęzi, których nie ma już
-  na GitHubie.
-- *Konektor (Fivetran/Airbyte), dlt czy własny skrypt?* — decyzja z TCO:
-  AI obniża koszt napisania, nie koszt utrzymania (zmiany API, dyżury,
-  sekrety, liczba źródeł). dlt (biblioteka do ingestion) to co innego niż DLT
-  (Delta Live Tables / Lakeflow, transformacje w Databricks).
-- *Dlaczego nie dlt w projekcie?* — chowa mechanikę, którą portfolio ma
-  pokazać, i nie teraz przed końcem triala. Plan: po 27.10 GitHub przepisany na
-  dlt obok obecnego skryptu, porównanie i ADR-007.
+**Pytania z tego kroku i czego uczą** (teoria: cheat sheet 12.12, 15.3.1):
+- **Zrobiłem squash merge w UI — co dalej w terminalu, i `switch` czy
+  `checkout`?** Lokalny git nie wie o merge'u z GitHuba: `git switch main && git
+  pull` (pobiera squash commit), potem usuwasz gałąź `git branch -D` (duże D,
+  bo po squash git nie rozpozna jej jako zmergowanej). `switch` robi to samo co
+  `checkout` przy gałęziach, ale `checkout` umie też nadpisywać pliki, więc
+  `switch` jest bezpieczniejszy.
+- **`fetch`, `pull`, `prune` — czym się różnią i skąd stare gałęzie
+  `origin/*`?** `fetch` pobiera stan GitHuba do kopii `origin/*` (remote-tracking
+  branches), nie ruszając Twoich plików; `pull` = `fetch` + scalenie do bieżącej
+  gałęzi. Gałęzie usunięte na GitHubie zostają lokalnie jako `origin/*`, dopóki
+  nie zrobisz `git fetch --prune`; u nas usunęło to 11 starych po PR #1–#11.
+- **Zwykle robi to gotowy konektor — dlaczego własny skrypt, i co to dlt?**
+  Wybór to rachunek kosztu UTRZYMANIA, nie napisania (AI obniża tylko ten
+  drugi): Fivetran/Airbyte przy wielu standardowych źródłach (płacisz za
+  wiersze, nie piszesz kodu), dlt (biblioteka Pythona: paginacja, stan,
+  schemat za Ciebie) gdy chcesz kod bez pisania infrastruktury, własny skrypt
+  przy nietypowym źródle albo gdy celem jest pokazanie mechaniki, jak tutaj.
+  dlt to nie DLT (Delta Live Tables w Databricks, transformacje).
+- **Dlaczego więc nie dlt teraz?** Schowałby paginację i okna, które portfolio
+  ma pokazać, a przed końcem triala nie ma czasu. Po 27.10: GitHub na dlt obok
+  skryptu i porównanie w ADR-007.
 
 **Zrobione (6.4, część 1, 21.10): DAG `dags/ecommerce_pipeline.py` bez dbt.**
 ```
@@ -1061,52 +1086,52 @@ extract_github   (równolegle, kończy się na raw)
   odrzuconymi (poprawka: pomijanie kwarantanny). Bramka zatrzymuje zły run,
   ale nie usuwa złych wierszy z późniejszych merge'y.
 
-**Pytania/odpowiedzi (21.10, teoria w cheat sheecie 31.8–31.11):**
-- *Dlaczego `BashOperator` dla extract, a `DockerOperator` dla merge?* — o
-  operatorze decyduje, gdzie kod może działać: extract potrzebuje tylko
-  bibliotek z obrazu Airflow, merge potrzebuje Javy/Sparka/Icebergu z obrazu
-  Sparka.
-- *Po co `max_active_runs=1` i `depends_on_past`?* — pierwsze zapobiega
-  równoległym MERGE (konflikty commitów Icebergu, kilka JVM na laptopie),
-  drugie wymaga sukcesu poprzedniego dnia. Dla poprawności danych u nas
-  niekonieczne (merge czyta cały raw), ale daje gwarancję ciągłości.
-- *Dlaczego `{{ data_interval_start }}` w klamrach?* — Jinja: Airflow czyta
-  plik DAG-a co ~30 s, wartości runu wstawia dopiero przy wykonaniu taska.
-- *Dlaczego nie dev/prod jak w korpo?* — w korporacji kod jest jeden, różni się
-  konfiguracja; u nas jest jedna infrastruktura. Plan: zamockować dwa
-  środowiska (`PIPELINE_ENV`, dbt `--target dev/prod`, schematy
-  `dbt_dev_*`/`dbt_prod_*` w Snowflake) razem z taskiem dbt (6.4b).
-- *TaskFlow, TaskGroup, XCom?* — TaskFlow to sposób pisania taska (`@task` na
-  funkcji), TaskGroup to sposób układania tasków (folder w UI), XCom to mały
-  schowek w bazie Airflow na wartości między taskami (nie na dane).
-- *Czy przenieść skrypty na `@task`?* — nie: `merge_*` i tak muszą iść w
-  kontenerze Sparka, skrypty są testowalne i uruchamialne bez Airflow, a dane
-  płyną przez S3. TaskFlow tylko dla logiki orkiestracji (decyzja 9 w
-  `CLAUDE.md`). Ewentualny porządek: logika w `src/portfolio_project/`,
-  skrypty jako cienkie CLI.
-
-- *Co robi `2>&1 | grep -E ...`?* — program ma dwa strumienie: stdout (1) i
-  stderr (2); `|` przekazuje do `grep` tylko stdout, a logi Airflow idą na
-  stderr, więc `2>&1` wlewa stderr do stdout, żeby filtr objął wszystko.
-  `&&` = dalej tylko po sukcesie, `;` = dalej zawsze (cheat sheet 32.1–32.2).
-- *Co to za składnia `airflow dags test ...`?* — CLI: program, grupa,
-  komenda, argumenty, jak w `git`/`docker compose` (cheat sheet 32.3).
-- *Git po merge'u PR* (`switch` vs `checkout`, `fetch`/`pull`/`prune`,
-  remote-tracking branches, `-D` po squash) — cheat sheet 12.12.
-- *Strategie merge PR?* — merge commit / squash / rebase (cheat sheet 12.3);
-  zostajemy przy squash (jeden PR = jeden commit na `main`).
-- *Kiedy `has_new_rows` zwraca `False` i dlaczego „nie da się odczytać” daje
-  `True`?* — `False` tylko przy 0 wierszy (`0 > 0`); `None` z regexa znaczy
-  „nie wiem”, a koszt niepotrzebnego uruchomienia (minuta Sparka, MERGE
-  idempotentny) jest dużo mniejszy niż cichego pominięcia danych (fail-safe).
-  Alternatywa: wyjątek i alert (fail-loud) (cheat sheet 31.12).
-- *`pendulum` czy `datetime`?* — oba działają, ważna jest strefa; `pendulum`,
-  bo Airflow używa go wewnętrznie i dobrze obsługuje DST (31.12).
-- *Dlaczego `DockerOperator` ma funkcję pomocniczą?* — 6 z 8 parametrów
-  wspólnych dla obu tasków Sparka (DRY); `BashOperator` nie ma czego wyciągać.
-- *Co to `GITHUB_REPO` i `apache/airflow`?* — publiczne repo na GitHubie jako
-  drugie źródło danych (dane o projekcie przez API), nazwa ze zmiennej
-  środowiskowej z wartością domyślną (12-factor, decyzja 8).
+**Pytania z przeglądu DAG-a i czego uczą** (teoria: cheat sheet 31.8–31.12, 32):
+- **Dlaczego extract przez `BashOperator`, a merge przez `DockerOperator`?**
+  Operator wybiera się po tym, gdzie kod może działać: extract i walidacja
+  potrzebują tylko bibliotek z obrazu Airflow, merge potrzebuje Javy/Sparka z
+  obrazu Sparka, więc dostaje własny chwilowy kontener. Skrypty nie importują
+  Airflow, więc działają też bez niego.
+- **Co znaczą `SCRIPTS_DIR`, `HOST_PROJECT_DIR`, `SPARK_IMAGE`?** Pierwsza to
+  ścieżka do skryptów WEWNĄTRZ kontenera Airflow (montowanie z compose). Druga to
+  ścieżka repo na Twoim MACU: `DockerOperator` prosi Dockera na Macu o nowy
+  kontener, a ten rozumie tylko ścieżki hosta. Trzecia to nazwa obrazu Sparka.
+- **Dlaczego `{{ data_interval_start }}` w klamrach?** To szablon Jinja. Scheduler
+  czyta plik DAG-a co ~30 s, kiedy żaden run jeszcze nie istnieje; wartości
+  runu wstawia dopiero przy wykonaniu taska. Dlatego też kod na najwyższym
+  poziomie pliku musi być lekki.
+- **Po co `max_active_runs=1` i `depends_on_past=True`?** Pierwsze = jeden run
+  naraz (bez równoległych MERGE na tych samych tabelach Icebergu i kilku JVM na
+  laptopie). Drugie = dzień N czeka na sukces dnia N-1, więc błąd zatrzymuje
+  kolejne dni zamiast zostawić cichą dziurę w danych.
+- **Dlaczego `start_date` 1.09 i czemu test z 13.09 nic nie zrobił?** Data runu
+  przed `start_date` daje run bez tasków (oznaczony jako sukces), a dane seed
+  kończą się 15.09. Plus pułapka: run ręczny dla daty D przetwarza dzień D-1.
+- **Dlaczego `extract_github` nie ma nic po sobie?** Dane z GitHuba lądują tylko
+  w raw (walidacja i merge obsługują tabele Postgresa), a podpięcie go przed
+  walidacją oznaczałoby, że awaria API GitHuba blokuje cały pipeline.
+- **TaskFlow, TaskGroup, XCom — co jest czym, i czy przenieść skrypty na
+  `@task`?** TaskFlow to sposób pisania taska (`@task` na funkcji), TaskGroup to
+  folder w UI, XCom to mały schowek w bazie Airflow na wartości między taskami.
+  Skrypty zostają skryptami: Spark i tak musi iść w swoim kontenerze, dane płyną
+  przez S3, a `@task` zostaje do decyzji orkiestracji (decyzja 9).
+- **Kiedy `has_new_rows` zwróci `False` i czemu „nie umiem odczytać” daje
+  `True`?** `False` tylko przy 0 wierszy (wtedy reszta jest skipped, nie
+  failed). Gdy linii nie da się odczytać, przepuszcza: niepotrzebny run kosztuje
+  minutę Sparka, a niepotrzebne pominięcie to ciche zgubienie danych
+  (fail-safe).
+- **`pendulum` czy `datetime`, po co funkcja pomocnicza dla `DockerOperator`, co
+  to `GITHUB_REPO`?** Oba typy dat działają, liczy się strefa (`pendulum`, bo
+  Airflow używa go wewnątrz). Funkcja, bo oba taski Sparka dzielą 6 z 8
+  parametrów. `GITHUB_REPO` to publiczne repo, z którego pobieramy dane przez
+  API, ustawiane zmienną środowiskową z wartością domyślną.
+- **Jak czytać komendy testowe (`2>&1 | grep`, `;`, `airflow dags test ...`)?**
+  Logi Airflow idą strumieniem błędów, a `|` przekazuje tylko zwykłe wyjście,
+  więc `2>&1` łączy oba przed filtrem; `;` uruchamia następną komendę zawsze,
+  `&&` tylko po sukcesie. CLI ma budowę program → grupa → komenda → argumenty,
+  jak `git` czy `docker compose`.
+- **Merge commit, squash czy rebase przy PR?** Zostajemy przy squash: jeden PR =
+  jeden commit na `main`, łatwy do cofnięcia (cheat sheet 12.3).
 
 **Test 21.10, ścieżka bez danych:** `airflow dags list-import-errors` → brak
 błędów. `airflow dags test ecommerce_pipeline 2026-10-20`: `extract_postgres`
@@ -1190,17 +1215,39 @@ PR #15. Na przyszłość: dorzucać do PR przed kliknięciem merge.
   do monitoringu w fazie 9 (np. codzienne sprawdzenie
   `SYSTEM$AUTO_REFRESH_STATUS` dla wszystkich tabel).
 
-**Pytania/odpowiedzi (22.10, cheat sheet 12.13, 25.17, 27.3, 31.13, 31.14, 32.4, 32.5):** `catalog-linked
-database` (ikona ogniwa) vs zwykła baza dbt; widok = przepis, tabela = gotowe
-danie; co zatrzymało pipeline (dbt pomija modele zależne wewnątrz siebie,
-Airflow widzi tylko kod wyjścia taska); `airflow dags test` zapisuje naprawdę
-(nie jest próbą na sucho); po co sumy kontrolne przy zapisie plików; skąd
-`PIPELINE_ENV`; dev/prod jak w korporacji (osobne wdrożenia z plikami
-konfiguracyjnymi; osobne buckety odłożone do fazy 8, Terraform; Iceberg dla
-prod nie odbuduje się „z raw”, bo `merge_dimensions.py` przy czytaniu wszystkich
-plików naraz zwinąłby historię SCD2 do najnowszej wersji); `git push` a PR,
-„ahead/behind”, `cherry-pick`; komendy `env`, `sed`, `printf >>`, `grep -l`,
-`diff`, `2>/dev/null`; `int_` = intermediate; RLS = filtr wierszy per rola.
+**Pytania z tego dnia i czego uczą** (teoria: cheat sheet 12.13, 25.17, 27.3,
+31.13, 31.14, 32.4, 32.5):
+- **Czym różni się `portfolio_ecommerce_db` (ikona ogniwa) od `portfolio_dbt`, i
+  widok od tabeli?** Pierwsza to catalog-linked database: nic nie przechowuje,
+  pokazuje Icebergi z Glue i odświeża ich metadane. Druga to zwykła baza, w
+  której dbt buduje swoje obiekty. Widok to zapisane zapytanie liczone przy
+  każdym odczycie (przepis), tabela to zapisany wynik (gotowe danie); dlatego
+  widoki staging od razu pokazały duplikaty, gdy Snowflake czytał dwa snapshoty.
+- **Co zatrzymało pipeline i czy `dags test` to próba na sucho?** dbt w ramach
+  `build` pominął modele zależne od złego testu, a Airflow widzi tylko kod
+  wyjścia taska, więc oznaczył task i run jako failed. `dags test` wykonuje
+  wszystko naprawdę (S3, MERGE, Snowflake); bezpieczne tylko dzięki
+  idempotencji.
+- **Co robi test i czy coś zapisuje? Co to RLS i `int_`?** Test to SELECT
+  szukający złych wierszy (0 = PASS), domyślnie nic nie zapisuje. RLS (row
+  access policy) filtruje wiersze zależnie od roli, np. analityk widzi tylko
+  DE. `int_` = intermediate, warstwa pośrednia między stagingiem a martem.
+- **Skąd `PIPELINE_ENV` i jak zrobić dev/prod „jak w korporacji”?** Zmienna z
+  `.env` → compose → kontener; DAG przekazuje ją jako `--target` do dbt
+  (`dbt_dev_*` / `dbt_prod_*`). W korporacji kod jest jeden, a środowiska różnią
+  się plikami konfiguracyjnymi i osobnymi wdrożeniami. Osobny bucket S3 dla
+  prod odłożony do Terraformu (faza 8): prod Icebergu nie da się odbudować z
+  raw, bo merge czytający wszystko naraz zwinąłby historię SCD2.
+- **Dlaczego `git push` nie stworzył PR?** Push tylko wysyła commity; PR tworzy
+  `gh pr create` albo przycisk w UI. Push na gałąź już zmergowanego PR nie trafia
+  nigdzie, więc nowa gałąź od `main` i `git cherry-pick <hash>` (kopiuje jeden
+  commit).
+- **Po co sumy kontrolne md5 przy zapisie plików?** Suma to odcisk treści
+  pliku: przed zapisem potwierdza, że nikt nie zmienił pliku, po zapisie, że w
+  repo jest naprawdę nowa wersja (lekcja z 20.10).
+- **Komendy `env`, `sed`, `printf >>`, `grep -l`, `diff`, `2>/dev/null`** —
+  użyte do przeniesienia zmiennych `DBT_SNOWFLAKE_*` do `.env` bez wyświetlania
+  wartości (cheat sheet 32.4).
 
 **Zrobione (22.10): testy dbt rozszerzone** (inspiracja: post z LinkedIn o
 testach dbt; cheat sheet 25.18–25.19).
@@ -1231,26 +1278,98 @@ testach dbt; cheat sheet 25.18–25.19).
 - Porządek w cheat sheecie: zdublowany numer 25.16 → „Bazy w Snowflake” to
   teraz 25.17.
 
-**Pytania/odpowiedzi (22.10, cont., cheat sheet 25.18, 25.19, 31.15):**
-- *Dlaczego zależności w jednej linii i jak czytać DAG?* — `a >> b` = b po
-  sukcesie a; korzenie startują równolegle; przekazanie `.output` tworzy
-  krawędź niejawnie; TaskGroup to folder w UI, nie zależność.
-- *Dlaczego testy w dbt, a nie w Airflow?* — dbt zna modele i lineage, test
-  leży obok modelu, `build` pomija tylko zależne modele; Airflow widzi tylko
-  kod wyjścia. Testy są w DAG-u przez task `dbt_build`; ręczny run to
-  sprawdzenie w trakcie developmentu.
-- *Dlaczego dane w unit teście się nie zmieniają? Czy to tylko SCD2? Dev czy
-  prod?* — to stałe przypadki brzegowe (jak pytest); zmieniają się tylko z
-  logiką modelu. Dotyczą jednego modelu, nie tylko SCD2. Unit testy w dev/CI,
-  testy danych wszędzie, także w prod.
-- *Dlaczego tyle pozycji (18) dla jednej tabeli?* — jedna komenda; `--select
-  fct_orders` bierze model z jego testami: 1 unit test + budowa + 16 testów
-  danych, każdy to osobne tanie zapytanie, równolegle (cheat sheet 25.18).
+**Pytania o testy i DAG i czego uczą** (teoria: cheat sheet 25.18, 25.19, 31.15, 32.6):
+- **Dlaczego zależności w jednej linii i jak czytać DAG?** `a >> b` = b startuje
+  po sukcesie a; czyta się od lewej, a cały przepływ w jednym miejscu jest
+  czytelniejszy niż zależności rozrzucone po pliku. Taski bez nikogo przed sobą
+  (korzenie) startują równolegle.
+- **Po co TaskGroup, skoro `extract_github` nic nie blokuje?** TaskGroup to
+  folder w UI grupujący taski według etapu (ingest / spark_merge / dbt), a nie
+  zależność; `extract_github` jest w ingest, bo to etap pobierania.
+- **Dlaczego testy w dbt, a nie w Airflow, i czy są częścią DAG-a?** dbt zna
+  modele i ich zależności, test leży obok modelu, a `build` pomija tylko to, co
+  zależy od złego modelu; Airflow widzi tylko kod wyjścia. Testy są w DAG-u
+  przez task `dbt_build`; uruchomienia z terminala to sprawdzanie w trakcie
+  pisania.
+- **Dlaczego dane w unit teście są wpisane na sztywno, czy to tylko SCD2, dev
+  czy prod?** Unit test sprawdza logikę SQL na ręcznie dobranych przypadkach
+  brzegowych (jak pytest), więc dane zmieniają się tylko razem z logiką. Dotyczy
+  jednego modelu (u nas SCD2 i `fct_orders`) i działa w dev/CI. Testy danych
+  sprawdzają prawdziwe dane, więc działają wszędzie, także w prod.
+- **Dlaczego „18” przy jednej tabeli i dlaczego komenda jest taka długa?** Jedna
+  komenda, a `--select fct_orders` bierze model z jego testami: budowa, unit
+  test i 16 testów danych. Długość komendy: `docker exec` (dbt i klucz są w
+  kontenerze), `cd` + pełna ścieżka do dbt (osobny venv), `grep` do filtrowania
+  logu. Na co dzień: `docker exec -w <katalog> ...`, a w korporacji dbt lokalnie
+  z venv albo przez Makefile.
 
-**Następny krok:** pliki konfiguracyjne `config/dev.yaml` i `config/prod.yaml`
-i wdrożenie prod (osobny Airflow w profilu Compose `prod`), potem 6.5 (retry,
-alert) i 6.6 (backfill 11–13.09), 26.10 zebranie dowodów.
+**Pytania o CI i stan projektu** (teoria: cheat sheet 31.16):
+- **Jakie „ręczne testy” i dlaczego PR nie odpala `dbt build`?** Ręczne testy to
+  komendy, które uruchamiasz i wklejasz (`dbt build`, `list-import-errors`, `dags
+  test`). Repo nie ma CI: GitHub bez `.github/workflows/` niczego nie uruchamia.
+  W korporacji każdy PR automatycznie przechodzi lint, test importu DAG-ów i
+  `dbt build` zmienionych modeli w schemacie CI, a merge jest zablokowany do
+  zielonych checków. U nas to faza 7.
+- **Ile jeszcze zostało?** Stan 22.10: fazy 0–5 gotowe, faza 6 ok. 70%; dalej 7
+  CI/CD, 8 Terraform, 9 observability. Po 27.10 bez Snowflake'a, więc fazy 7–9
+  na AWS/Spark/Airflow.
+
+**Zrobione (22.10): dev i prod jako konfiguracja, dwa wdrożenia.**
+- `config/dev.yaml` i `config/prod.yaml`: tylko to, co się różni (harmonogram:
+  dev 00:00, prod 03:00 UTC, żeby dwa MERGE do tych samych tabel Icebergu nie szły
+  naraz; target dbt; prod `--exclude-resource-type unit_test`). DAG przy
+  wczytaniu czyta `config/<PIPELINE_ENV>.yaml`; brak pliku = błąd importu, a nie
+  ciche wartości domyślne. W kodzie nie ma żadnego `if prod`.
+- `docker-compose.yml`: `./config` zamontowany tylko do odczytu w Airflow;
+  `PIPELINE_ENV: dev` wpisany na stałe (już nie z `.env`); drugi Airflow w
+  profilu `prod` (własna baza metadanych, init, UI na 8081 oznaczone „PROD”,
+  scheduler, logi w `logs/prod`), startowany tylko przez `docker compose
+  --profile prod up -d`.
+- Test: dev `No data found`, harmonogram „At 00:00”; prod `No data found`,
+  „At 03:00” — ten sam plik DAG-a, inne zachowanie wyłącznie z konfiguracji.
+  DAG w prodzie wstrzymany (pauza) do czasu pierwszego runu.
+- Do poprawy: compose zbudował osobny obraz dla każdego serwisu (identyczne,
+  z cache'u). W firmie jeden obraz z jedną wersją idzie na wszystkie
+  środowiska; do zrobienia przez wspólne `image:` w serwisach Airflow.
+
+**Pytania o dev/prod i czego uczą** (teoria: cheat sheet 31.17):
+- **Na co się zgodziłem w kolejnych zmianach i co zrobił `docker compose up
+  -d`?** Trzy małe kroki zamiast jednej dużej komendy (wcześniejszą, ze 100
+  liniami konfiguracji naraz, odrzuciłeś, bo nie dało się jej przejrzeć). `up -d`
+  utworzył od nowa tylko kontenery, którym zmieniły się montowania (`Started`),
+  resztę zostawił (`Running`): montowania ustawia się wyłącznie przy tworzeniu
+  kontenera.
+- **Jak prod nadpisze `PIPELINE_ENV: dev`?** Wspólne zmienne są w compose raz,
+  pod kotwicą YAML `&airflow-common-env`. Prod wkleja je (`<<:
+  *airflow-common-env`) i dopisuje swoje; przy powtórzonym kluczu wygrywa
+  późniejszy. Zmieniają się tylko `PIPELINE_ENV` i adres bazy metadanych.
+- **Skąd biorą się zmienne środowiskowe?** Droga zawsze ta sama: źródło
+  (`.env` dla sekretów, stała w compose, `${PWD}` z terminala) → sekcja
+  `environment:` w compose → env procesu w kontenerze → czytelnik (sam Airflow,
+  skrypty przez `os.environ`/`boto3`, dbt przez `env_var()`, DAG, który klucze
+  AWS przekazuje dalej do kontenera Sparka). Pełna tabela w cheat sheecie.
+- **Jak `PIPELINE_ENV` zmienia się z dev na prod?** Nie zmienia się nigdy. Są
+  dwa komplety kontenerów, każdy z wartością wpisaną na stałe od startu; ten sam
+  DAG robi co innego, bo czyta inny plik konfiguracyjny. „Przejście na prod” to
+  uruchomienie drugiego kompletu, a w firmie: ta sama wersja kodu wdrożona przez
+  CI na osobny Airflow.
+- **Dlaczego wyszukiwarka nie znalazła `PIPELINE_ENV=prod`?** Przed dopisaniem
+  proda tej wartości nie było, a składnia zależy od miejsca: w compose (YAML)
+  `PIPELINE_ENV: prod`, w `.env` i w działającym kontenerze `PIPELINE_ENV=...`;
+  `.env` jest w `.gitignore`, więc VS Code go nie przeszukuje.
+- **Czy da się zrobić to jak w firmie?** Bliżej: jeden szablon compose dla
+  Airflowa i plik wartości per środowisko (`env/prod.env`), każde wdrożenie jako
+  osobny projekt (`docker compose -p portfolio-prod --env-file ...`), co wymaga
+  wydzielenia Postgresa-źródła i Sparka do osobnego pliku (kilka godzin). W
+  pełni: dwa Airflowy w chmurze na osobnych kontach (faza 8). Wybrany wariant z
+  profilem, bo trial kończy się 27.10.
+- **Co to Helm?** Menedżer wdrożeń dla Kubernetesa: chart (szablon całego
+  Airflowa) + `values-dev.yaml`/`values-prod.yaml`; CI robi `helm upgrade` po
+  merge'u. Ten sam pomysł co nasz blok compose + nadpisania proda.
+
+**Następny krok:** 6.5 (retry, alert), 6.6 (backfill 11–13.09), 26.10 zebranie
+dowodów; potem faza 7 (CI).
 
 ---
 
-*Ten plik aktualizuj po każdym większym kroku — kolejność chronologiczna, krótkie Q&A, bez kopiowania całych fragmentów rozmowy.*
+*Ten plik aktualizuj po każdym większym kroku — kolejność chronologiczna; pytania z rozmowy zapisane z kontekstem (skąd się wzięły) i z wiedzą, której uczą, tak żeby były zrozumiałe po miesiącu; ogólna teoria w cheat sheecie.*

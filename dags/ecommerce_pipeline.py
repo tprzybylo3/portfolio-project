@@ -48,6 +48,7 @@ import os
 import re
 
 import pendulum
+import yaml
 from airflow import DAG
 from airflow.decorators import task
 from airflow.operators.bash import BashOperator
@@ -61,13 +62,12 @@ SPARK_IMAGE = "portfolio-spark:latest"
 PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "dev")  # dev | prod -> dbt target (decision 10)
 DBT_BIN = "/opt/airflow/dbt_venv/bin/dbt"  # separate venv, see airflow-docker/Dockerfile
 DBT_PROJECT_DIR = "/opt/airflow/dbt_portfolio"  # bind-mounted from ./dbt_portfolio
-# Per-environment dbt flags (moves to config/<env>.yaml with the prod deployment).
-# Unit tests check SQL logic on fixed mock rows -- they belong where code changes
-# (dev/CI); prod runs only data tests, on real data.
-DBT_BUILD_FLAGS = {
-    "dev": "",
-    "prod": "--exclude-resource-type unit_test",
-}[PIPELINE_ENV]
+# Per-environment settings (schedule, dbt target/flags) from config/<PIPELINE_ENV>.yaml;
+# a missing file fails the DAG import instead of silently using defaults.
+with open(f"/opt/airflow/pipeline_config/{PIPELINE_ENV}.yaml") as config_file:  # mounted from ./config
+    ENV_CONFIG = yaml.safe_load(config_file)
+DBT_TARGET = ENV_CONFIG["dbt"]["target"]
+DBT_BUILD_FLAGS = ENV_CONFIG["dbt"]["build_flags"]
 LOOKBACK_MINUTES = 10  # must exceed the longest write transaction in postgres-source (ADR-006)
 
 WINDOW_START = "{{ data_interval_start.isoformat() }}"
@@ -117,7 +117,7 @@ def has_new_rows(extract_summary: str) -> bool:
 with DAG(
     dag_id="ecommerce_pipeline",
     description=f"Postgres + GitHub -> S3 raw -> validation -> Iceberg (Spark MERGE) -> dbt [{PIPELINE_ENV}]",
-    schedule="@daily",
+    schedule=ENV_CONFIG["schedule"],
     # Seed data in postgres-source ends mid-September: start_date must be before
     # the days used for tests/backfill, or Airflow creates runs with NO tasks.
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
@@ -153,14 +153,14 @@ with DAG(
         # (none configured) or a connection error, so this only warns.
         dbt_source_freshness = BashOperator(
             task_id="dbt_source_freshness",
-            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} source freshness --target {PIPELINE_ENV}",
+            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} source freshness --target {DBT_TARGET}",
         )
 
         # dbt build = unit tests + run + data tests in dependency order (a failing
         # test stops the models downstream of it). --target follows the environment.
         dbt_build = BashOperator(
             task_id="dbt_build",
-            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {PIPELINE_ENV} {DBT_BUILD_FLAGS}",
+            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {DBT_TARGET} {DBT_BUILD_FLAGS}",
         )
 
     # extract_postgres.output = the last line extract.py printed (XCom), e.g.

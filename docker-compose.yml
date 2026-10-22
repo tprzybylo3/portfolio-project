@@ -74,9 +74,9 @@ services:
       # /opt/airflow/... paths that only exist inside this container.
       HOST_PROJECT_DIR: ${PWD}
       # --- dbt -> Snowflake (task dbt_build), values from .env ---
-      # Which mocked environment this Airflow is: picks the dbt target
-      # (dev -> dbt_dev_* schemas, prod -> dbt_prod_*). CLAUDE.md decision 10.
-      PIPELINE_ENV: ${PIPELINE_ENV:-dev}
+      # Which environment this Airflow deployment is (not from .env): the DAG
+      # reads config/<PIPELINE_ENV>.yaml (schedule, dbt target). Decision 10.
+      PIPELINE_ENV: dev   # fixed per deployment; prod services override it
       DBT_PROFILES_DIR: /opt/airflow/dbt_profiles
       DBT_SNOWFLAKE_ACCOUNT: ${DBT_SNOWFLAKE_ACCOUNT}
       DBT_SNOWFLAKE_USER: ${DBT_SNOWFLAKE_USER}
@@ -102,6 +102,7 @@ services:
       - ./logs:/opt/airflow/logs
       - ./scripts:/opt/airflow/scripts              # extract/validate scripts run by BashOperator
       - ./dbt_portfolio:/opt/airflow/dbt_portfolio  # dbt project run from the dbt venv
+      - ./config:/opt/airflow/pipeline_config:ro    # per-environment settings read by the DAG
     command: webserver
 
   airflow-scheduler:
@@ -116,6 +117,7 @@ services:
       - ./logs:/opt/airflow/logs
       - ./scripts:/opt/airflow/scripts
       - ./dbt_portfolio:/opt/airflow/dbt_portfolio
+      - ./config:/opt/airflow/pipeline_config:ro
       # LocalExecutor runs tasks as subprocesses of the scheduler, so this is
       # the container that talks to Docker: DockerOperator starts the Spark
       # merge jobs as short-lived containers through the host's daemon.
@@ -123,6 +125,78 @@ services:
       # dbt: the env-var-only profile template from the repo becomes the real
       # profiles.yml (no secrets in it), and the Snowflake private key is
       # mounted read-only from outside the repo -- never baked into the image.
+      - ./dbt_portfolio/profiles.yml.example:/opt/airflow/dbt_profiles/profiles.yml:ro
+      - ${DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH:?set DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH in .env}:/opt/airflow/secrets/rsa_key.p8:ro
+    command: scheduler
+
+  # ===================== PROD deployment (mocked) =====================
+  # Second Airflow: same image and DAG, PIPELINE_ENV=prod, own metadata DB,
+  # UI and logs. Started only with: docker compose --profile prod up -d
+  postgres-airflow-prod:
+    image: postgres:16
+    container_name: postgres-airflow-prod
+    profiles: ["prod"]
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - pg_airflow_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  airflow-init-prod:
+    build: ./airflow-docker
+    container_name: airflow-init-prod
+    profiles: ["prod"]
+    depends_on:
+      postgres-airflow-prod:
+        condition: service_healthy
+    environment: &airflow-prod-env
+      <<: *airflow-common-env        # all shared variables, then the prod overrides:
+      PIPELINE_ENV: prod
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow-prod/airflow
+      AIRFLOW__WEBSERVER__INSTANCE_NAME: "PROD"
+      AIRFLOW__WEBSERVER__NAVBAR_COLOR: "#e8a0a0"
+    command: >
+      bash -c "airflow db migrate && (airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true)"
+
+  airflow-webserver-prod:
+    build: ./airflow-docker
+    container_name: airflow-webserver-prod
+    profiles: ["prod"]
+    depends_on:
+      airflow-init-prod:
+        condition: service_completed_successfully
+    environment: *airflow-prod-env
+    ports:
+      - "8081:8080"       # prod UI: http://127.0.0.1:8081
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs/prod:/opt/airflow/logs   # same dag_id as dev, so separate log folder
+      - ./scripts:/opt/airflow/scripts
+      - ./dbt_portfolio:/opt/airflow/dbt_portfolio
+      - ./config:/opt/airflow/pipeline_config:ro
+    command: webserver
+
+  airflow-scheduler-prod:
+    build: ./airflow-docker
+    container_name: airflow-scheduler-prod
+    profiles: ["prod"]
+    depends_on:
+      airflow-init-prod:
+        condition: service_completed_successfully
+    environment: *airflow-prod-env
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs/prod:/opt/airflow/logs
+      - ./scripts:/opt/airflow/scripts
+      - ./dbt_portfolio:/opt/airflow/dbt_portfolio
+      - ./config:/opt/airflow/pipeline_config:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./dbt_portfolio/profiles.yml.example:/opt/airflow/dbt_profiles/profiles.yml:ro
       - ${DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH:?set DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH in .env}:/opt/airflow/secrets/rsa_key.p8:ro
     command: scheduler
@@ -150,3 +224,4 @@ services:
 volumes:
   pg_source_data:
   pg_airflow_data:
+  pg_airflow_prod_data:
