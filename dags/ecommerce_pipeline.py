@@ -62,11 +62,10 @@ SPARK_IMAGE = "portfolio-spark:latest"
 PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "dev")  # dev | prod -> dbt target (decision 10)
 DBT_BIN = "/opt/airflow/dbt_venv/bin/dbt"  # separate venv, see airflow-docker/Dockerfile
 DBT_PROJECT_DIR = "/opt/airflow/dbt_portfolio"  # bind-mounted from ./dbt_portfolio
-# Per-environment settings (schedule, dbt target/flags) from config/<PIPELINE_ENV>.yaml;
+# Per-environment settings (schedule, dbt flags) from config/<PIPELINE_ENV>.yaml;
 # a missing file fails the DAG import instead of silently using defaults.
 with open(f"/opt/airflow/pipeline_config/{PIPELINE_ENV}.yaml") as config_file:  # mounted from ./config
     ENV_CONFIG = yaml.safe_load(config_file)
-DBT_TARGET = ENV_CONFIG["dbt"]["target"]
 DBT_BUILD_FLAGS = ENV_CONFIG["dbt"]["build_flags"]
 LOOKBACK_MINUTES = 10  # must exceed the longest write transaction in postgres-source (ADR-006)
 
@@ -153,14 +152,14 @@ with DAG(
         # (none configured) or a connection error, so this only warns.
         dbt_source_freshness = BashOperator(
             task_id="dbt_source_freshness",
-            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} source freshness --target {DBT_TARGET}",
+            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} source freshness --target {PIPELINE_ENV}",
         )
 
         # dbt build = unit tests + run + data tests in dependency order (a failing
         # test stops the models downstream of it). --target follows the environment.
         dbt_build = BashOperator(
             task_id="dbt_build",
-            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {DBT_TARGET} {DBT_BUILD_FLAGS}",
+            bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {PIPELINE_ENV} {DBT_BUILD_FLAGS}",
         )
 
     # extract_postgres.output = the last line extract.py printed (XCom), e.g.
