@@ -26,10 +26,28 @@ sources:
         description: Products, full SCD Type 2 history maintained by Spark (valid_from/valid_to/is_current).
       - name: orders
         description: Orders, upserted by Spark -- current state per order_id.
+        # Freshness (`dbt source freshness`, not part of `dbt build`): warn only.
+        # Seed data ends mid-September, so this warns by design on this
+        # project; it becomes meaningful with a live source. Note: it would NOT
+        # have caught the 22.10 incident (Snowflake stale while the source
+        # itself had not changed) -- see cheat sheet 25.17.
+        config:
+          loaded_at_field: '"updated_at"'
+          freshness:
+            warn_after: {count: 2, period: day}
       - name: order_items
         description: Order lines, upserted by Spark -- current state per order_item_id.
       - name: payments
         description: Payments, upserted by Spark -- current state per payment_id.
+        # Freshness (`dbt source freshness`, not part of `dbt build`): warn only.
+        # Seed data ends mid-September, so this warns by design on this
+        # project; it becomes meaningful with a live source. Note: it would NOT
+        # have caught the 22.10 incident (Snowflake stale while the source
+        # itself had not changed) -- see cheat sheet 25.17.
+        config:
+          loaded_at_field: '"updated_at"'
+          freshness:
+            warn_after: {count: 2, period: day}
       - name: order_status_history
         description: Append-only log of order status changes.
 
@@ -43,6 +61,12 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: ['customer_id', 'valid_from']
+      # SCD2 window sanity: a closed version must end after it starts.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "valid_to IS NULL OR valid_to > valid_from"
+          config:
+            store_failures: true
     columns:
       - name: customer_id
         description: Business key of the customer (repeats once per version).
@@ -76,6 +100,11 @@ models:
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns: ['product_id', 'valid_from']
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "valid_to IS NULL OR valid_to > valid_from"
+          config:
+            store_failures: true
     columns:
       - name: product_id
         description: Business key of the product (repeats once per version).
@@ -110,11 +139,27 @@ models:
       - name: customer_id
         data_tests:
           - not_null
+          # Orphaned foreign keys = silent data loss in every downstream join.
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
       - name: order_status
         description: Renamed from source column status.
+        data_tests:
+          # Same list as validate.py (raw); second line of defence after staging.
+          - accepted_values:
+              arguments:
+                values: ['pending', 'paid', 'shipped', 'delivered', 'cancelled']
 
   - name: stg_order_items
     description: One row per order line.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "quantity > 0 AND unit_price >= 0"
+          config:
+            store_failures: true
     columns:
       - name: order_item_id
         data_tests:
@@ -123,14 +168,28 @@ models:
       - name: order_id
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
       - name: product_id
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
       - name: quantity
         description: Renamed from source column qty.
 
   - name: stg_payments
     description: One row per payment with its current status.
+    data_tests:
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "amount >= 0"
+          config:
+            store_failures: true
     columns:
       - name: payment_id
         data_tests:
@@ -139,10 +198,22 @@ models:
       - name: order_id
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
       - name: payment_method
         description: Renamed from source column method.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['credit_card', 'debit_card', 'paypal', 'bank_transfer']
       - name: payment_status
         description: Renamed from source column status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'completed', 'failed', 'refunded']
 
   - name: stg_order_status_history
     description: One row per order status transition (append-only).
@@ -154,5 +225,13 @@ models:
       - name: order_id
         data_tests:
           - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
       - name: order_status
         description: Renamed from source column status.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'paid', 'shipped', 'delivered', 'cancelled']

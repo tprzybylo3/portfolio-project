@@ -51,8 +51,10 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
   on any quarantined row) → `merge_dimensions` → `merge_facts`
   (`DockerOperator`, image `portfolio-spark:latest`); `extract_github` runs in
   parallel and ends in raw. `@daily`, `catchup=False`, `max_active_runs=1`,
-  `depends_on_past=True`. Since 22.10 also `dbt.dbt_build` after `merge_facts`
-  (`dbt build --target $PIPELINE_ENV` from the dbt venv), TaskGroups
+  `depends_on_past=True`. Since 22.10 also `dbt.dbt_source_freshness` (warn
+  only) and `dbt.dbt_build` after `merge_facts` (`dbt build --target
+  $PIPELINE_ENV` from the dbt venv; prod adds `--exclude-resource-type
+  unit_test`), TaskGroups
   `ingest` / `spark_merge` / `dbt`. Container profile = the repo's
   `profiles.yml.example` mounted as `profiles.yml` (env vars only, targets
   `dev` and `prod`); the Snowflake key is mounted read-only from the host path
@@ -157,6 +159,9 @@ dbt_portfolio/
 │   └── marts/                   # fct_orders (Iceberg); next marts driven by
 │                                # business questions, see decision 5
 ├── tests/                       # singular tests (contiguity, PIT match, reconciliation)
+│                                # + in schema.yml: relationships, accepted_values,
+│                                # expression_is_true (store_failures), freshness,
+│                                # unit_tests (int_customer_versions, fct_orders)
 ├── catalogs.yml                 # gold_iceberg -> portfolio_gold_ext_vol
 ├── packages.yml / package-lock.yml   # dbt_utils, pinned
 ├── dbt_project.yml

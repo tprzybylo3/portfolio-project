@@ -13,6 +13,24 @@ models:
       Further guarded by singular tests
       assert_fct_orders_one_customer_version_per_order and
       assert_fct_orders_gross_value_reconciles.
+    data_tests:
+      # Business rules: amounts can never be negative.
+      - dbt_utils.expression_is_true:
+          arguments:
+            expression: "gross_order_value >= 0 AND paid_amount >= 0 AND refunded_amount >= 0"
+          config:
+            store_failures: true
+      # Plausibility, not an invariant: a customer refunded and then paying
+      # again legitimately ends above the order value. Passes on seed data;
+      # WARN shows such a case without blocking the pipeline, store_failures
+      # keeps the rows for inspection.
+      - dbt_utils.expression_is_true:
+          name: fct_orders_settled_not_above_order_value
+          arguments:
+            expression: "paid_amount + refunded_amount <= gross_order_value"
+          config:
+            severity: warn
+            store_failures: true
     columns:
       - name: order_id
         description: Grain of the mart.
@@ -36,6 +54,10 @@ models:
           - not_null
       - name: order_status
         description: Current status of the order.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'paid', 'shipped', 'delivered', 'cancelled']
       - name: country_at_order
         description: >
           Customer's country in the SCD2 version effective at order_date.
@@ -72,3 +94,38 @@ models:
         description: SUM(amount) of payments with status 'refunded'; 0 if none.
         data_tests:
           - not_null
+
+unit_tests:
+  # Logic of fct_orders on fixed rows (runs in dev/CI, excluded in prod):
+  # payment statuses -> paid/refunded, order without lines -> 0, point-in-time
+  # country (customer 5 moved LY -> FR on 2026-09-26), order before the first
+  # customer version (customer 7) -> is_before_first_customer_version.
+  - name: fct_orders_amounts_and_point_in_time_country
+    model: fct_orders
+    given:
+      - input: ref('stg_orders')
+        rows:
+          - {order_id: 1001, customer_id: 5, order_date: '2026-08-15 12:00:00', order_status: 'delivered'}
+          - {order_id: 1002, customer_id: 5, order_date: '2026-09-30 09:00:00', order_status: 'paid'}
+          - {order_id: 1003, customer_id: 7, order_date: '2026-07-15 08:00:00', order_status: 'pending'}
+      - input: ref('stg_order_items')
+        rows:
+          - {order_id: 1001, quantity: 2, unit_price: 10.00}
+          - {order_id: 1001, quantity: 1, unit_price: 5.50}
+          - {order_id: 1002, quantity: 3, unit_price: 20.00}
+      - input: ref('stg_payments')
+        rows:
+          - {order_id: 1001, payment_status: 'completed', amount: 20.00}
+          - {order_id: 1001, payment_status: 'failed',    amount: 25.50}
+          - {order_id: 1001, payment_status: 'refunded',  amount: 5.50}
+          - {order_id: 1002, payment_status: 'completed', amount: 60.00}
+      - input: ref('int_customer_versions')
+        rows:
+          - {customer_id: 5, country: 'LY', valid_from: '2026-07-01 10:00:00', effective_from: '1900-01-01 00:00:00', effective_to: '2026-09-26 13:00:00', is_current: false}
+          - {customer_id: 5, country: 'FR', valid_from: '2026-09-26 13:00:00', effective_from: '2026-09-26 13:00:00', effective_to: '9999-12-31 00:00:00', is_current: true}
+          - {customer_id: 7, country: 'DE', valid_from: '2026-08-01 00:00:00', effective_from: '1900-01-01 00:00:00', effective_to: '9999-12-31 00:00:00', is_current: true}
+    expect:
+      rows:
+        - {order_id: 1001, country_at_order: 'LY', current_country: 'FR', is_before_first_customer_version: false, gross_order_value: 25.50, paid_amount: 20.00, refunded_amount: 5.50}
+        - {order_id: 1002, country_at_order: 'FR', current_country: 'FR', is_before_first_customer_version: false, gross_order_value: 60.00, paid_amount: 60.00, refunded_amount: 0}
+        - {order_id: 1003, country_at_order: 'DE', current_country: 'DE', is_before_first_customer_version: true,  gross_order_value: 0,     paid_amount: 0,     refunded_amount: 0}
