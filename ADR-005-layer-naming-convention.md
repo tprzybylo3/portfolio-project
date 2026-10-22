@@ -103,6 +103,45 @@ zachowaniem nazwy + `ALTER ICEBERG TABLE ... REFRESH` w Snowflake **zachowuje**
 polityki i granty, bo dla Snowflake to ten sam obiekt z nowym wskaźnikiem
 metadanych. Gubi je dopiero zmiana nazwy.
 
+## Aktualizacja 2026-10-22: ukryty skutek przeniesienia w Snowflake
+
+**Co się stało:** przeniesienie z 7.10 zostawiło w Snowflake'u zatrzymane
+automatyczne odświeżanie 5 z 6 tabel catalog-linked database
+(`executionState: GENERALIZED_PIPE_STOPPED` od 7.10 11:38; działała tylko
+`order_status_history`, w której MERGE wyłącznie dopisuje). Snowflake przez dwa
+tygodnie serwował stan sprzed przenosin i nie przechodził na nowsze wersje
+metadanych (Glue: `00005`, Snowflake: `00003`). Błąd odświeżania: „invalid file …
+was found in the Iceberg metadata snapshot”, a zapytania po usunięciu starych
+katalogów: „parquet file … fact_orders/… was inaccessible”.
+
+**Mechanizm (najbardziej prawdopodobny):** `rewrite_table_path` zmienia ścieżki
+plików, ale zachowuje identyfikatory snapshotów. Snowflake odświeża tabelę
+przyrostowo według snapshotów i pamięta, które pliki dodał który snapshot; plik
+z nową ścieżką w „znanym” snapshocie uznał za nieprawidłowy i zatrzymał
+odświeżanie. Działało, dopóki stare pliki istniały; po ich usunięciu z S3
+(sprzątanie z §25) odczyty zaczęły zwracać duplikaty lub błędy. Weryfikacja z
+§25 sprawdzała Glue i Sparka, nie stan Snowflake'a.
+
+**Wykrycie:** testy `unique` dbt na stagingu w pierwszym runie DAG-a z taskiem
+dbt (22.10); dbt pominął modele zależne (`fct_orders` nie została przebudowana).
+
+**Naprawa:** ręczne `ALTER ICEBERG TABLE ... REFRESH` zwracało ten sam błąd.
+Odtworzenie catalog-linked database tym samym poleceniem (z `GET_DDL`):
+`DROP DATABASE` + `CREATE DATABASE ... LINKED_CATALOG` → Snowflake wykrył 6 tabel
+od zera na aktualnych metadanych; potem polityki na `customer` (przed grantami),
+potem granty dla `portfolio_analyst`. Bezpieczne dla danych: rola Snowflake'a ma
+w Glue tylko odczyt, external volume `ALLOW_WRITES = FALSE`. Weryfikacja: liczby
+51/30/200/502/160/493 (zgodne ze Sparkiem, `orders` 200/200), metadane `00005`,
+odświeżanie `RUNNING`, analityk widzi tylko DE i zamaskowany e-mail, `dbt build`
+PASS=51. Skrypt: `snowflake/2026-10-22_recreate_catalog_linked_db.sql`.
+
+**Zmiana procedury (uzupełnia „Wzorzec bezpiecznej migracji”):** po fizycznym
+przeniesieniu tabeli Iceberg sprawdzić **każdy silnik osobno**, nie tylko
+katalog: w Snowflake'u `SYSTEM$AUTO_REFRESH_STATUS` (`RUNNING`) i
+`SYSTEM$GET_ICEBERG_TABLE_INFORMATION` (ta sama wersja metadanych co w Glue),
+**przed** usunięciem starych plików. Przy przeniesieniu przez
+`rewrite_table_path` zakładać, że catalog-linked database trzeba odtworzyć.
+
 ## Powiązane
 
 - ADR-002 (ta sama baza Glue i bucket S3), ADR-004 (catalog integration i
