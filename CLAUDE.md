@@ -51,7 +51,15 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
   on any quarantined row) → `merge_dimensions` → `merge_facts`
   (`DockerOperator`, image `portfolio-spark:latest`); `extract_github` runs in
   parallel and ends in raw. `@daily`, `catchup=False`, `max_active_runs=1`,
-  `depends_on_past=True`.
+  `depends_on_past=True`. Since 22.10 also `dbt.dbt_build` after `merge_facts`
+  (`dbt build --target $PIPELINE_ENV` from the dbt venv), TaskGroups
+  `ingest` / `spark_merge` / `dbt`. Container profile = the repo's
+  `profiles.yml.example` mounted as `profiles.yml` (env vars only, targets
+  `dev` and `prod`); the Snowflake key is mounted read-only from the host path
+  in `.env` (`DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH`).
+- `portfolio_ecommerce_db` (catalog-linked) was recreated on 22.10 because its
+  auto-refresh had been stopped since the 7.10 relocation (ADR-005, update
+  2026-10-22). Policies on `customer` and analyst grants re-applied.
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)
 
@@ -94,7 +102,13 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
    and grants manually, then test both roles. Moving a table's files while
    keeping its name (`rewrite_table_path` + swap, PROGRESS_LOG §25) followed by
    `ALTER ICEBERG TABLE ... REFRESH` in Snowflake keeps policies and grants;
-   still verify with `POLICY_REFERENCES`.
+   still verify with `POLICY_REFERENCES`. **But** `rewrite_table_path` keeps
+   snapshot IDs while changing file paths, which stopped Snowflake's
+   auto-refresh (ADR-005, update 2026-10-22). After any physical move, check
+   `SYSTEM$AUTO_REFRESH_STATUS` = `RUNNING` and the same metadata version as Glue
+   for every table BEFORE deleting old files; recovery = recreate the
+   catalog-linked database (`GET_DDL`), then policies, then grants
+   (`snowflake/2026-10-22_recreate_catalog_linked_db.sql`).
 7. **Extraction window = Airflow data interval, no watermark state (ADR-006).**
    Extract scripts take `--start`/`--end` (ISO timestamps) and filter
    `col >= start AND col < end`. The task subtracts a 10-minute lookback from

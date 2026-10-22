@@ -73,6 +73,18 @@ services:
       # resolved by that daemon -- so they must be host paths, not
       # /opt/airflow/... paths that only exist inside this container.
       HOST_PROJECT_DIR: ${PWD}
+      # --- dbt -> Snowflake (task dbt_build), values from .env ---
+      # Which mocked environment this Airflow is: picks the dbt target
+      # (dev -> dbt_dev_* schemas, prod -> dbt_prod_*). CLAUDE.md decision 10.
+      PIPELINE_ENV: ${PIPELINE_ENV:-dev}
+      DBT_PROFILES_DIR: /opt/airflow/dbt_profiles
+      DBT_SNOWFLAKE_ACCOUNT: ${DBT_SNOWFLAKE_ACCOUNT}
+      DBT_SNOWFLAKE_USER: ${DBT_SNOWFLAKE_USER}
+      DBT_SNOWFLAKE_WAREHOUSE: ${DBT_SNOWFLAKE_WAREHOUSE}
+      DBT_SNOWFLAKE_ROLE: ${DBT_SNOWFLAKE_ROLE:-portfolio_engineer}
+      # Path INSIDE the container; the file itself is bind-mounted read-only
+      # from the host path in .env (see airflow-scheduler volumes).
+      DBT_SNOWFLAKE_PRIVATE_KEY_PATH: /opt/airflow/secrets/rsa_key.p8
     command: >
       bash -c "airflow db migrate && (airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true)"
 
@@ -108,6 +120,11 @@ services:
       # the container that talks to Docker: DockerOperator starts the Spark
       # merge jobs as short-lived containers through the host's daemon.
       - /var/run/docker.sock:/var/run/docker.sock
+      # dbt: the env-var-only profile template from the repo becomes the real
+      # profiles.yml (no secrets in it), and the Snowflake private key is
+      # mounted read-only from outside the repo -- never baked into the image.
+      - ./dbt_portfolio/profiles.yml.example:/opt/airflow/dbt_profiles/profiles.yml:ro
+      - ${DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH:?set DBT_SNOWFLAKE_PRIVATE_KEY_HOST_PATH in .env}:/opt/airflow/secrets/rsa_key.p8:ro
     command: scheduler
 
   # --- Spark + Iceberg: used for the batch MERGE job into the Iceberg

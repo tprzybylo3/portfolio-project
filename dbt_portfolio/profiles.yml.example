@@ -12,6 +12,13 @@
 #
 # Auth is key-pair (cheat sheet 14.4) -- the recommended method for a
 # service account; no password is used anywhere.
+#
+# Also used AS-IS by Airflow: docker-compose.yml mounts this file into the
+# scheduler as /opt/airflow/dbt_profiles/profiles.yml. It holds no values,
+# only env_var() lookups, so the same file serves the laptop and the
+# container. Two targets mock two environments on one Snowflake account
+# (CLAUDE.md decision 10): dev -> dbt_dev_* schemas, prod -> dbt_prod_*.
+# Airflow picks the target from PIPELINE_ENV.
 
 dbt_portfolio:
   target: dev
@@ -29,4 +36,18 @@ dbt_portfolio:
       database: portfolio_dbt
       # Staging views land in <schema>_staging, i.e. dbt_dev_staging.
       schema: dbt_dev
+      threads: 4
+    prod:
+      # Same account, warehouse and role as dev -- only the schema differs
+      # (mocked environment). In a real setup prod would use its own
+      # database/role/service user, all coming from the same env vars.
+      type: snowflake
+      account: "{{ env_var('DBT_SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('DBT_SNOWFLAKE_USER') }}"
+      private_key_path: "{{ env_var('DBT_SNOWFLAKE_PRIVATE_KEY_PATH') }}"
+      private_key_passphrase: "{{ env_var('DBT_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: "{{ env_var('DBT_SNOWFLAKE_ROLE', 'portfolio_engineer') }}"
+      warehouse: "{{ env_var('DBT_SNOWFLAKE_WAREHOUSE') }}"
+      database: portfolio_dbt
+      schema: dbt_prod
       threads: 4

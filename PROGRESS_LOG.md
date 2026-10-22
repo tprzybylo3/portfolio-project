@@ -1139,8 +1139,72 @@ były w Icebergu, MERGE ich nie zdublował (dowód idempotentności). DAG dział
 end-to-end Postgres → S3 → walidacja → Iceberg. Logi zdublowane (log do pliku i
 terminala w `dags test`; `DockerOperator` przekazuje logi kontenera dwa razy).
 
-**Następny krok:** PR #13 (DAG, bramka, short-circuit), potem 6.4b: task dbt
-(Snowflake), dwa środowiska (`PIPELINE_ENV`, dbt `--target`) i TaskGroup.
+**Git 22.10:** PR #13 zmergowany (DAG). Commit z dokumentacją trafił na
+gałąź już zmergowanego PR (push po merge'u nie tworzy ani nie aktualizuje
+zamkniętego PR), więc przeniesiony `git cherry-pick` na nową gałąź od `main` →
+PR #15. Na przyszłość: dorzucać do PR przed kliknięciem merge.
+
+**Zrobione (6.4b, 22.10): task dbt w DAG-u.**
+- Kontener łączy się ze Snowflake'iem bez żadnego sekretu w repo: szablon
+  `dbt_portfolio/profiles.yml.example` (same `env_var()`) zamontowany jako
+  `profiles.yml`, klucz RSA zamontowany tylko do odczytu ze ścieżki hosta w
+  `.env`; zmienne `DBT_SNOWFLAKE_*` przeniesione do `.env` (wcześniej były tylko w
+  sesji terminala, niewidoczne dla `docker compose` z nowego terminala).
+- Profil ma teraz targety `dev` (`dbt_dev_*`) i `prod` (`dbt_prod_*`);
+  `PIPELINE_ENV` (domyślnie `dev`) wybiera target. TaskGroup `ingest`,
+  `spark_merge`, `dbt`.
+- `dbt debug` z kontenera: połączenie OK; `git [ERROR]` nieistotny (git
+  potrzebny tylko do pakietów z repozytoriów git; `dbt_utils` jest z dbt Hub i
+  już zainstalowany).
+
+**Incydent 22.10: Snowflake od 7.10 nie widział zmian w 5 tabelach.**
+- Objaw: pierwszy run z dbt → 7 testów `unique` na stagingu padło
+  (`orders`, `order_items`, `payments`, `customers`, `products`), dbt pominął
+  modele zależne (`SKIP=22`, `fct_orders` nieprzebudowana), task i run
+  failed. Spark w tym samym czasie: 200/502/160/493, bez duplikatów.
+- Diagnoza krok po kroku: (1) brak plików usunięć w Icebergu (tylko pliki
+  danych, copy-on-write), więc nie merge-on-read; (2) Snowflake: „parquet file
+  … `fact_orders/` … inaccessible”, czyli stara ścieżka sprzed §25, usunięta z
+  S3; (3) Glue wskazuje metadane `00005` (22.10), Snowflake `00003` (7.10);
+  (4) `SYSTEM$AUTO_REFRESH_STATUS`: `GENERALIZED_PIPE_STOPPED` od 7.10 11:38 dla 5
+  tabel, `RUNNING` tylko dla `order_status_history` (MERGE tylko dopisuje);
+  przyczyna „invalid file … was found in the Iceberg metadata snapshot”.
+- Mechanizm: `rewrite_table_path` zachował identyfikatory snapshotów, a
+  zmienił ścieżki; Snowflake odświeża przyrostowo po snapshotach i odrzucił
+  plik z nową ścieżką w „znanym” snapshocie. Weryfikacja z §25 objęła Glue i
+  Sparka, nie Snowflake'a.
+- Naprawa: ręczne `REFRESH` zwracało ten sam błąd, więc odtworzenie
+  `portfolio_ecommerce_db` poleceniem z `GET_DDL` (po inwentaryzacji grantów i
+  polityk), potem polityki na `customer`, potem granty (analityk nie miał
+  dostępu bez polityk). Pierwsze uruchomienie bloku z politykami za wcześnie
+  (tabele nie były jeszcze wykryte, `sync_interval_seconds = 30`); błąd
+  zatrzymał też granty, więc bez okna bez polityk.
+- Weryfikacja: Snowflake 51/30/200(200 unikalnych)/502/160/493, metadane
+  `00005`, odświeżanie `RUNNING`; analityk: 2 wiersze, oba DE, e-mail
+  `***@example.org`; ponowny `airflow dags test ecommerce_pipeline 2026-09-14`:
+  wszystkie taski SUCCESS, **dbt `PASS=51 ERROR=0`**.
+- Lekcje: (1) po fizycznym przeniesieniu tabeli sprawdzać każdy silnik, nie
+  tylko katalog, i to przed usunięciem starych plików (ADR-005, aktualizacja
+  2026-10-22; `CLAUDE.md` decyzja 6); (2) ciche zatrzymanie odświeżania nie dało
+  żadnego alertu przez dwa tygodnie, a wyłapały je dopiero testy dbt: kandydat
+  do monitoringu w fazie 9 (np. codzienne sprawdzenie
+  `SYSTEM$AUTO_REFRESH_STATUS` dla wszystkich tabel).
+
+**Pytania/odpowiedzi (22.10, cheat sheet 12.13, 25.16, 27.3, 31.13, 31.14, 32.4, 32.5):** `catalog-linked
+database` (ikona ogniwa) vs zwykła baza dbt; widok = przepis, tabela = gotowe
+danie; co zatrzymało pipeline (dbt pomija modele zależne wewnątrz siebie,
+Airflow widzi tylko kod wyjścia taska); `airflow dags test` zapisuje naprawdę
+(nie jest próbą na sucho); po co sumy kontrolne przy zapisie plików; skąd
+`PIPELINE_ENV`; dev/prod jak w korporacji (osobne wdrożenia z plikami
+konfiguracyjnymi; osobne buckety odłożone do fazy 8, Terraform; Iceberg dla
+prod nie odbuduje się „z raw”, bo `merge_dimensions.py` przy czytaniu wszystkich
+plików naraz zwinąłby historię SCD2 do najnowszej wersji); `git push` a PR,
+„ahead/behind”, `cherry-pick`; komendy `env`, `sed`, `printf >>`, `grep -l`,
+`diff`, `2>/dev/null`; `int_` = intermediate; RLS = filtr wierszy per rola.
+
+**Następny krok:** pliki konfiguracyjne `config/dev.yaml` i `config/prod.yaml`
+i wdrożenie prod (osobny Airflow w profilu Compose `prod`), potem 6.5 (retry,
+alert) i 6.6 (backfill 11–13.09), 26.10 zebranie dowodów.
 
 ---
 
