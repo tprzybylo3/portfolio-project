@@ -1093,6 +1093,20 @@ extract_github   (równolegle, kończy się na raw)
   komenda, argumenty, jak w `git`/`docker compose` (cheat sheet 32.3).
 - *Git po merge'u PR* (`switch` vs `checkout`, `fetch`/`pull`/`prune`,
   remote-tracking branches, `-D` po squash) — cheat sheet 12.12.
+- *Strategie merge PR?* — merge commit / squash / rebase (cheat sheet 12.3);
+  zostajemy przy squash (jeden PR = jeden commit na `main`).
+- *Kiedy `has_new_rows` zwraca `False` i dlaczego „nie da się odczytać” daje
+  `True`?* — `False` tylko przy 0 wierszy (`0 > 0`); `None` z regexa znaczy
+  „nie wiem”, a koszt niepotrzebnego uruchomienia (minuta Sparka, MERGE
+  idempotentny) jest dużo mniejszy niż cichego pominięcia danych (fail-safe).
+  Alternatywa: wyjątek i alert (fail-loud) (cheat sheet 31.12).
+- *`pendulum` czy `datetime`?* — oba działają, ważna jest strefa; `pendulum`,
+  bo Airflow używa go wewnętrznie i dobrze obsługuje DST (31.12).
+- *Dlaczego `DockerOperator` ma funkcję pomocniczą?* — 6 z 8 parametrów
+  wspólnych dla obu tasków Sparka (DRY); `BashOperator` nie ma czego wyciągać.
+- *Co to `GITHUB_REPO` i `apache/airflow`?* — publiczne repo na GitHubie jako
+  drugie źródło danych (dane o projekcie przez API), nazwa ze zmiennej
+  środowiskowej z wartością domyślną (12-factor, decyzja 8).
 
 **Test 21.10, ścieżka bez danych:** `airflow dags list-import-errors` → brak
 błędów. `airflow dags test ecommerce_pipeline 2026-10-20`: `extract_postgres`
@@ -1125,7 +1139,7 @@ były w Icebergu, MERGE ich nie zdublował (dowód idempotentności). DAG dział
 end-to-end Postgres → S3 → walidacja → Iceberg. Logi zdublowane (log do pliku i
 terminala w `dags test`; `DockerOperator` przekazuje logi kontenera dwa razy).
 
-**Następny krok:** commit i PR (Faza 6.3–6.4 cz. 1), potem 6.4b: task dbt
+**Następny krok:** PR #13 (DAG, bramka, short-circuit), potem 6.4b: task dbt
 (Snowflake), dwa środowiska (`PIPELINE_ENV`, dbt `--target`) i TaskGroup.
 
 ---
