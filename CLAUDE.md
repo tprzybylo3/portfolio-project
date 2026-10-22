@@ -129,8 +129,8 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
 10. **Environments are configuration, not code.** One codebase; `dev`/`prod`
     are two Airflow deployments (docker-compose: default services = dev,
     profile `prod` = prod) that differ only by `PIPELINE_ENV` (fixed per
-    deployment in compose) and `config/<PIPELINE_ENV>.yaml` (schedule, dbt
-    target, dbt flags). Never fork DAGs or scripts per environment and never
+    deployment in compose; also the dbt `--target`) and
+    `config/<PIPELINE_ENV>.yaml` (schedule, dbt flags). Never fork DAGs or scripts per environment and never
     write `if env == "prod"` in code -- add a key to the config files instead.
     Both deployments share S3/Iceberg/keys (mocked); dev runs at 00:00 UTC,
     prod at 03:00 so their MERGEs never overlap.

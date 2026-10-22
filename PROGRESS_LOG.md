@@ -1317,7 +1317,8 @@ testach dbt; cheat sheet 25.18–25.19).
 **Zrobione (22.10): dev i prod jako konfiguracja, dwa wdrożenia.**
 - `config/dev.yaml` i `config/prod.yaml`: tylko to, co się różni (harmonogram:
   dev 00:00, prod 03:00 UTC, żeby dwa MERGE do tych samych tabel Icebergu nie szły
-  naraz; target dbt; prod `--exclude-resource-type unit_test`). DAG przy
+  naraz; prod `--exclude-resource-type unit_test`). Target dbt = sam
+  `PIPELINE_ENV`. DAG przy
   wczytaniu czyta `config/<PIPELINE_ENV>.yaml`; brak pliku = błąd importu, a nie
   ciche wartości domyślne. W kodzie nie ma żadnego `if prod`.
 - `docker-compose.yml`: `./config` zamontowany tylko do odczytu w Airflow;
@@ -1328,6 +1329,14 @@ testach dbt; cheat sheet 25.18–25.19).
 - Test: dev `No data found`, harmonogram „At 00:00”; prod `No data found`,
   „At 03:00” — ten sam plik DAG-a, inne zachowanie wyłącznie z konfiguracji.
   DAG w prodzie wstrzymany (pauza) do czasu pierwszego runu.
+- Pułapka (23.10): po edycji plików w `config/` oba schedulery zgłosiły
+  `FileNotFoundError: .../pipeline_config/dev.yaml`, choć pliki były na Macu.
+  `ls` w kontenerze pokazał pusty folder (`total 0`): Docker Desktop zgubił
+  widok zamontowanego katalogu. Naprawa: `docker compose --profile prod up -d
+  --force-recreate <serwisy Airflow>`; bazy nietknięte. Dobry znak: brak
+  configu dał głośny błąd importu, nie ciche wartości domyślne. Zasada: po
+  zmianie zamontowanego configu sprawdzić import, a przy błędzie odtworzyć
+  kontenery (w firmie zmiana configu i tak oznacza nowe wdrożenie).
 - Do poprawy: compose zbudował osobny obraz dla każdego serwisu (identyczne,
   z cache'u). W firmie jeden obraz z jedną wersją idzie na wszystkie
   środowiska; do zrobienia przez wspólne `image:` w serwisach Airflow.
@@ -1363,6 +1372,20 @@ testach dbt; cheat sheet 25.18–25.19).
   wydzielenia Postgresa-źródła i Sparka do osobnego pliku (kilka godzin). W
   pełni: dwa Airflowy w chmurze na osobnych kontach (faza 8). Wybrany wariant z
   profilem, bo trial kończy się 27.10.
+- **Po co osobno `PIPELINE_ENV` i `DBT_TARGET`?** Pierwsza wersja czytała
+  target dbt z configu (`dbt.target`), „na wypadek”, gdyby nazwy środowisk i
+  targetów się rozjechały (np. osobne środowisko CI piszące do targetu `dev`,
+  target per developer). Tu oba mają zawsze te same wartości, więc to była
+  zbędna komplikacja: wycofana, `--target {PIPELINE_ENV}`. Zasada z ADR-ów:
+  nie dodawać złożoności bez realnej potrzeby. Przy okazji: `target: dev` w
+  `profiles.yml` to tylko target domyślny (gdy komenda nie ma `--target`), a
+  `outputs` to lista dostępnych targetów.
+- **Czy dev i prod mają osobny Snowflake / Databricks?** Snowflake: zwykle jedno
+  konto, środowiska rozdzielone bazami, rolami i warehouse'ami (osobne konta
+  głównie przy ostrych regulacjach). Databricks: standardem są osobne
+  workspace'y dla dev i prod w jednym koncie, plus katalogi per środowisko w
+  Unity Catalog. U nas jedna baza `PORTFOLIO_DBT`, schematy `dbt_dev_*` i
+  `dbt_prod_*`.
 - **Co to Helm?** Menedżer wdrożeń dla Kubernetesa: chart (szablon całego
   Airflowa) + `values-dev.yaml`/`values-prod.yaml`; CI robi `helm upgrade` po
   merge'u. Ten sam pomysł co nasz blok compose + nadpisania proda.
