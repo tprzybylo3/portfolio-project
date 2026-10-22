@@ -147,9 +147,18 @@ with DAG(
             bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {PIPELINE_ENV}",
         )
 
-    # Passing extract_postgres.output both feeds the XCom value in and creates
-    # the dependency extract_postgres >> new_rows_gate.
+    # extract_postgres.output = the last line extract.py printed (XCom), e.g.
+    # "Done. 26 rows extracted across 6 tables." -- see has_new_rows above.
     new_rows_gate = has_new_rows(extract_postgres.output)
 
+    # ------------- Pipeline: ALL dependencies in one place, in flow order -------------
+    # Roots (no upstream, start in parallel): extract_postgres, extract_github.
+    # extract_github is an independent branch with nothing downstream: GitHub data
+    # lands in raw only (merge_*.py handle the Postgres tables), so a GitHub API
+    # outage must not block the Postgres pipeline.
+    #
+    # extract_postgres >> new_rows_gate is also implied by
+    # has_new_rows(extract_postgres.output) above (passing a task's output creates
+    # the dependency); stated here explicitly so the whole flow reads in one line.
     # Dimensions before facts: sequential on purpose (one JVM at a time on a laptop).
-    new_rows_gate >> validate_raw >> merge_dimensions >> merge_facts >> dbt_build
+    extract_postgres >> new_rows_gate >> validate_raw >> merge_dimensions >> merge_facts >> dbt_build
