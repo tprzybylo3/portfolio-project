@@ -1423,8 +1423,179 @@ testach dbt; cheat sheet 25.18–25.19).
   razy?”, „jak zrobić backfill 3 miesięcy?”, „jak wykryć ciche uszkodzenie
   danych?”) posłużą za szkielet README w 6.7.
 
-**Następny krok:** 6.5 (retry, alert), 6.6 (backfill 11–13.09), 26.10 zebranie
-dowodów; potem faza 7 (CI).
+**Git 23.10:** PR #18 zmergowany za wcześnie (bez usunięcia `target`), drugi
+commit poszedł na gałąź po merge'u (ta sama lekcja co 22.10) → PR #19; dokumentacja
+→ PR #20. Przy #20 konflikt w `PROGRESS_LOG.md`: ten sam fragment zmieniony różnie
+na gałęzi i na `main`, git nie zgaduje, którą wersję wziąć. Rozwiązany w UI
+(„Accept current change”: po stronie `main` fragment był pusty, więc nic nie
+zginęło), kontrola `grep -c "<<<<<<<" PROGRESS_LOG.md` → 0.
+
+**Pytania o Asanę i czego uczą** (teoria: cheat sheet 31.18):
+- **Czy da się wykorzystać Asanę w projekcie?** Tak, w dwóch miejscach. (1) W
+  6.5 jako cel alertów: `on_failure_callback` zakłada zadanie w projekcie „Data
+  incidents” przez API Asany. (2) Po 27.10 jako trzecie źródło danych (zadania,
+  projekty): filtr `modified_since` i API zdarzeń z tokenem synchronizacji to
+  inny wzorzec przyrostowego pobierania niż Postgres i GitHub; dlt ma gotowe
+  źródło Asany, więc to naturalny kandydat do porównania w ADR-007 (GitHub
+  własnym skryptem, Asana przez dlt).
+- **Czy alerty pojawią się w Asanie od razu?** Tak, po ostatecznym błędzie taska
+  (po wszystkich retry) callback wysyła jedno zapytanie `POST /tasks` i zadanie
+  jest w Asanie po kilku sekundach. To przepływ jednostronny (Airflow → Asana),
+  nie synchronizacja. Pierwsza wersja nie zamyka zadania po udanym runie i nie
+  łączy powtórek; kolejne kroki: `on_success_callback` zamykający otwarte
+  zadanie i sprawdzenie „czy otwarte zadanie dla tego taska już istnieje”
+  (wtedy komentarz zamiast nowego zadania). W firmie: Slack/PagerDuty do
+  powiadomień, ticket (Jira/Asana) dla incydentów do rozwiązania.
+- Do zrobienia przez Ciebie: darmowe konto Asana (API jest w planie Personal),
+  projekt „Data incidents”, Personal Access Token; w `.env` `ASANA_TOKEN` i
+  `ASANA_PROJECT_ID` (liczba z adresu projektu). Token nigdy w repo.
+
+**Zrobione (6.5, 23.10): retry z rosnącą przerwą, `execution_timeout`, alert do Asany.**
+- `config/dev.yaml` i `prod.yaml`: blok `retries` (dev: 2 ponowienia, przerwa od
+  30 s, limit 5 min; prod: 3, od 2 min, limit 30 min, bo o 03:00 nikt nie
+  patrzy) i `execution_timeout_minutes` per etap (extract 10, validate 10,
+  spark_merge 15, dbt 20; ok. 5–10× normalnego czasu; w obu środowiskach te
+  same, bo dane są wspólne, w firmie decydowałby wolumen proda).
+- DAG: `retries`, `retry_delay`, `retry_exponential_backoff`, `max_retry_delay`
+  i `on_failure_callback` w `default_args` (obejmują każdy task),
+  `execution_timeout` per task. `validate_raw` i `has_new_rows` mają
+  `retries=0`: ich porażka jest deterministyczna (kwarantanna, odczyt XCom),
+  ponowienie dałoby ten sam wynik. Retry jest bezpieczny, bo każdy task jest
+  idempotentny.
+- `dags/alerting/asana.py`: callback woła się raz, po OSTATNIEJ nieudanej próbie
+  (także po timeoucie), i wysyła jedno `POST /tasks` do projektu „Data
+  incidents”: tytuł `[env] dag.task failed (window …)`, w notatce run, okno,
+  link do logu i błąd. Nigdy nie rzuca wyjątku (zasłoniłby oryginalny błąd w
+  logu); brak tokenu = głośny wpis w logu, bez awarii taska.
+  `dags/.airflowignore`: scheduler nie parsuje modułu jako DAG-a.
+- Sekrety: `ASANA_TOKEN` (PAT z prywatnego konta) i `ASANA_PROJECT_ID` (liczba po
+  `/project/` w adresie) w `.env`, przekazane przez compose do obu Airflowów.
+
+**Test na żywo 23.10 (dev, run z harmonogramu, okno 22.10):**
+`docker compose stop postgres-source` jako realistyczny błąd przejściowy (baza
+źródłowa nie odpowiada), bez zmiany kodu.
+
+| Próba | Start (UTC) | Przerwa | Wynik |
+|---|---|---|---|
+| 1 | 18:40:10 | — | `UP_FOR_RETRY` |
+| 2 | 18:40:43 | 33 s (oczekiwane 30–60) | `UP_FOR_RETRY` |
+| 3 | 18:42:32 | 109 s (oczekiwane 60–120) | `FAILED` → zadanie w Asanie po 1 s |
+
+Jedno zadanie w Asanie (nie trzy), trafiło do pierwszej sekcji projektu;
+`extract_github` sukces mimo awarii Postgresa, reszta `upstream_failed` (bez
+Sparka i dbt). Okno w logu `2026-10-21T23:50` → `2026-10-23T00:00` (dzień 22.10
+z zakładką). Druga połowa: `docker compose start postgres-source` + `airflow
+tasks clear ... -t '^ingest\.extract_postgres$' -d -s 2026-10-22 -e 2026-10-22
+-y` → run zielony, `has_new_rows` = False (0 wierszy w oknie 22.10, seed kończy
+się 15.09), reszta `skipped`. Zadanie w Asanie zamknięte ręcznie (pierwsza
+wersja działa tylko w jedną stronę).
+
+**Odkryte przy teście: zator `depends_on_past` po TaskGroupach.**
+- Objaw: run `scheduled__2026-10-22` od 18:27 w stanie `running`, wszystkie
+  taski bez statusu, przez `max_active_runs=1` blokował kolejne runy. `airflow
+  tasks failed-deps`: „depends_on_past is true …, but the previous task instance
+  has not run yet”.
+- Przyczyna: TaskGroup zmienia `task_id` (`extract_postgres` →
+  `ingest.extract_postgres`). Przy `catchup=False` „poprzedni run” to
+  `manual__2026-10-20` (`dags test` z 21.10, sprzed TaskGroup), który nie ma
+  instancji o nowym ID, więc Airflow czekał bez końca. Na Gridzie widać to w
+  runie 13.09: zielone `has_new_rows`/`validate_raw` (spoza grup), puste `extract_*`.
+- Naprawa: usunięcie z metadanych runu testowego `manual__2026-10-20` (Browse →
+  DAG Runs → Delete; nie `airflow dags delete`, które kasuje całą historię DAG-a).
+  Dane w S3/Iceberg/Snowflake i pliki logów nietknięte. Poprzednim runem stał się
+  `manual__2026-09-14` (powtórzony 22.10 z nowymi ID), scheduler od razu
+  wystartował task.
+- Lekcje: (1) zmiana `task_id`, także przez TaskGroup, zrywa historię taska
+  (`depends_on_past`, czasy trwania); w firmie: nie zmieniać ID w działającym
+  DAG-u (`prefix_group_id=False`) albo przy wdrożeniu świadomie przeciąć historię
+  (jednorazowy run z „Ignore Task Deps”), historii runów na prodzie się nie
+  kasuje (audyt). (2) Zator to cisza, nie porażka, więc alert do Asany go nie
+  łapie; kandydat: `dagrun_timeout` + callback na poziomie DAG-a.
+- Moje błędy: komendy wypisane po przecinku w zdaniu (wklejone do terminala nie
+  zadziałały; od teraz komendy tylko w bloku kodu, w formie do wklejenia) i data
+  z UI (23.10 = koniec okna) zamiast daty logicznej (22.10) w `failed-deps`.
+
+**Git 23.10:** `git push origin --delete` dla `feat/dbt-tests`,
+`feat/dev-prod-config`, `feat/airflow-dbt-task` → „remote ref does not exist”:
+na GitHubie już ich nie było, zostały tylko lokalne kopie `origin/*`, które
+sprząta dopiero `git fetch --prune`. Lokalne `feat/dbt-tests` usunięte (sprawdzone
+wcześniej, że nic z niego nie brakuje na `main`).
+
+**Pytania z tego kroku i czego uczą:**
+- **Czy konto w Asanie zakładać na sztuczny mail (np. `PG_ASANA@PG.com`)?** Nie:
+  Asana wymaga potwierdzenia maila, a domena prawdziwej firmy może przypiąć konto
+  do jej organizacji w Asanie i wygląda na podszywanie się. Do portfolio
+  wystarcza PAT z prywatnego konta; osobna tożsamość „bota” = alias Gmaila
+  (`mail+asana-bot@gmail.com`).
+- **Jak to się robi w firmie?** Konto techniczne zakłada IT/admin na wniosek (ticket,
+  właściciel, akceptacja, nazwa typu `svc-data-alerts`). Dwie opcje: service
+  account Asany (plany Enterprise, tworzy super admin, tylko API, ale z pełnymi
+  uprawnieniami widzi wszystkie dane organizacji, więc rzadko dla wąskiej
+  integracji) albo częściej użytkownik integracyjny: prawdziwa skrzynka funkcyjna
+  w domenie firmy, licencja, zaproszenie tylko do jednego projektu, PAT z jego
+  konta (najmniejsze uprawnienia). Token w vaulcie (Key Vault / Secrets Manager /
+  HashiCorp Vault), Airflow czyta go jako Connection przez secrets backend; rotacja
+  i przeglądy dostępu. Często zamiast Asany: alert na Slack/Teams/PagerDuty,
+  ticket w Jirze/ServiceNow.
+- **`,` vs `&&` vs `;`?** Przecinek nie jest składnią shella (git dostał całą linię
+  jako swoje argumenty). `&&` = następna komenda tylko po sukcesie poprzedniej,
+  `;` = zawsze. W firmie jednorazowe kroki wpisuje się po kolei, `&&` jest w
+  skryptach/Makefile/CI.
+- **Co zrobiły komendy gita i co naprawiło stare gałęzie?** Gałąź żyje w trzech
+  miejscach: lokalnie (`feat/x`), jako lokalna kopia stanu GitHuba (`origin/feat/x`,
+  aktualizuje ją tylko `fetch`/`pull`) i na GitHubie. Zwykły `fetch` niczego nie
+  usuwa, `--prune` kasuje kopie gałęzi, których na GitHubie już nie ma. W firmie
+  raz: `git config --global fetch.prune true` + w repo „Automatically delete head
+  branches”.
+- **Dlaczego zatrzymujemy `postgres-source`?** Retry i alert działają tylko przy
+  porażce, więc trzeba ją wywołać celowo: najczęstszy realny powód retry (baza
+  źródłowa chwilowo niedostępna), jedna odwracalna komenda, dane w wolumenie,
+  Airflow ma osobną bazę metadanych, kod bez zmian. W firmie: test na dev/stagingu
+  (złe hasło w connection, chaos testy), nigdy na współdzielonej bazie.
+- **Dlaczego `tasks clear`, a nie uruchomienie całego DAG-a?** Naprawiamy ten
+  konkretny run (okno 22.10), a nie dokładamy nowego: czerwony run zostałby w
+  historii i przez `depends_on_past` zablokował kolejne dni. `clear` zeruje stan
+  wybranych instancji (`-t` regex nazwy, `-d` z downstream, `-s/-e` które runy,
+  `-y` bez potwierdzenia), scheduler uruchamia je ponownie (nowa próba =
+  `attempt=4`), `extract_github` (sukces) nietknięty. Bezpieczne dzięki
+  idempotencji. W firmie: przycisk „Clear” z „Downstream” w UI.
+- **Dlaczego reszta `skipped`?** Okno 22.10 ma 0 wierszy, `has_new_rows` (sam
+  task = success) zdecydował „nic do roboty” i short-circuit pominął resztę: bez
+  JVM i kredytów Snowflake, run zielony.
+- **Skąd dbt w Airflow i czy mam dwa dbt?** Airflow nie zawiera dbt; dołożyliśmy go
+  sami w 6.1 do naszego obrazu (`airflow-docker/Dockerfile`, osobny venv
+  `/opt/airflow/dbt_venv`), bo `BashOperator` przy `LocalExecutor` wykonuje komendę
+  w kontenerze schedulera, więc program `dbt` musi tam być. Instalacje są dwie, w
+  tych samych wersjach: `.venv` na Macu (praca z terminala, `~/.dbt/profiles.yml`) i
+  venv w obrazie (DAG, profil z repo + `.env`); kod modeli wspólny. „dbt z Airflow”
+  i „dbt z Dockera” to ta sama instalacja. W firmie: jeden obraz z CI używany
+  wszędzie albo dbt w osobnym obrazie (`DockerOperator`/`KubernetesPodOperator`),
+  albo Astronomer Cosmos (każdy model dbt jako osobny task Airflow).
+- **Jak działa `DockerOperator` i czy Java/JAR-y go wymuszają?** Kod w schedulerze
+  przez `docker.sock` prosi silnik Dockera na Macu o NOWY, chwilowy kontener z
+  obrazu `portfolio-spark:latest` (montowanie `scripts/` ze ścieżki Maca, klucze
+  AWS, komenda `python3 merge_*.py`), uruchomiony obok schedulera, nie w nim
+  (Docker-out-of-Docker); operator przekazuje logi i czeka na kod wyjścia, po
+  sukcesie kontener znika. Stały `spark-iceberg` to inny kontener z tego samego
+  obrazu, DAG go nie używa. Java nie wymusza `DockerOperator`, to wybór: Java +
+  Spark + JAR-y w obrazie Airflow = ciężki obraz, konflikty wersji, przebudowa
+  Airflow przy każdej zmianie Sparka. W firmie Airflow w ogóle nie liczy, tylko
+  zleca na klaster (`SparkSubmitOperator`, EMR, Glue, Databricks,
+  `KubernetesPodOperator`), jak ADF odpalający job w Databricks.
+- **Dlaczego zadanie w Asanie zamykam ręcznie?** Pierwsza wersja wysyła tylko `POST`
+  przy porażce. Auto-zamknięcie wymaga `on_success_callback`, odnalezienia
+  zadania (zapamiętane ID albo szukanie otwartego po nazwie), `PUT` z
+  `completed: true` i warunku, żeby nie pytać Asany przy każdym sukcesie; plus
+  deduplikacja (komentarz zamiast nowego zadania). W firmie alert (Slack,
+  PagerDuty) zamyka się sam po ustąpieniu problemu, a ticket incydentu zamyka
+  człowiek po ustaleniu przyczyny (czy nie ma dziury w danych, dlaczego baza padła).
+
+**Następny krok:** commit + PR z `feat/retries-alerting`; potem 6.6 (backfill
+11–13.09; przed nim sprawdzić runy testowe 13.09/14.09 w metadanych, bo 13.09 ma
+`extract_*` pod starymi ID) i 6.7 (README na pytaniach kontrolnych z planu, 2–3
+testy `dbt-expectations`, dowody do 26.10). Po 27.10: auto-zamykanie i
+deduplikacja zadań w Asanie, `dagrun_timeout` z alertem na poziomie DAG-a; potem
+faza 7 (CI).
 
 ---
 
