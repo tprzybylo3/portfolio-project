@@ -41,11 +41,17 @@ Design notes:
   the dbt target (dbt_dev_* vs dbt_prod_* schemas). One codebase, config only.
 - TaskGroups (ingest / spark_merge / dbt) are visual grouping; dependencies are
   still set task-to-task, so extract_github does not gate the pipeline.
-- Retries/backoff/alerting come in step 6.5.
+- Retries with exponential backoff and per-stage execution_timeout come from
+  config/<env>.yaml (dev retries short, prod longer). Retries are for TRANSIENT
+  errors (network, API, Iceberg commit conflict); tasks whose failure is
+  deterministic (validate_raw gate, has_new_rows) get retries=0. Every task is
+  idempotent, so a retry is safe. After the last failed attempt
+  on_failure_callback opens an Asana task (dags/alerting/asana.py).
 """
 
 import os
 import re
+from datetime import timedelta
 
 import pendulum
 import yaml
@@ -55,6 +61,8 @@ from airflow.operators.bash import BashOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.utils.task_group import TaskGroup
 from docker.types import Mount
+
+from alerting.asana import create_asana_incident  # dags/ is on sys.path
 
 SCRIPTS_DIR = "/opt/airflow/scripts"  # bind-mounted from ./scripts (docker-compose.yml)
 HOST_PROJECT_DIR = os.environ.get("HOST_PROJECT_DIR", "")  # repo path on the HOST, for DockerOperator mounts
@@ -67,6 +75,8 @@ DBT_PROJECT_DIR = "/opt/airflow/dbt_portfolio"  # bind-mounted from ./dbt_portfo
 with open(f"/opt/airflow/pipeline_config/{PIPELINE_ENV}.yaml") as config_file:  # mounted from ./config
     ENV_CONFIG = yaml.safe_load(config_file)
 DBT_BUILD_FLAGS = ENV_CONFIG["dbt"]["build_flags"]
+RETRY_CONFIG = ENV_CONFIG["retries"]
+TIMEOUT_MINUTES = ENV_CONFIG["execution_timeout_minutes"]  # per stage: extract / validate / spark_merge / dbt
 LOOKBACK_MINUTES = 10  # must exceed the longest write transaction in postgres-source (ADR-006)
 
 WINDOW_START = "{{ data_interval_start.isoformat() }}"
@@ -87,6 +97,7 @@ def spark_merge_task(task_id: str, script_name: str) -> DockerOperator:
     return DockerOperator(
         task_id=task_id,
         image=SPARK_IMAGE,
+        execution_timeout=timedelta(minutes=TIMEOUT_MINUTES["spark_merge"]),
         command=f"python3 /opt/spark-scripts/{script_name}",
         mounts=[
             Mount(source=f"{HOST_PROJECT_DIR}/scripts", target="/opt/spark-scripts", type="bind", read_only=True),
@@ -98,7 +109,7 @@ def spark_merge_task(task_id: str, script_name: str) -> DockerOperator:
     )
 
 
-@task.short_circuit
+@task.short_circuit(retries=0)  # parses a value already in XCom: a retry gives the same answer
 def has_new_rows(extract_summary: str) -> bool:
     """BashOperator pushes the LAST line of the script's output to XCom:
     extract.py ends with "Done. <N> rows extracted across 6 tables."
@@ -124,6 +135,12 @@ with DAG(
     max_active_runs=1,  # runs go in order: SCD2 versions and logs stay readable
     default_args={
         "depends_on_past": True,  # day N waits for a successful (or skipped) day N-1
+        # Step 6.5: retry transient errors with growing pauses, then alert once.
+        "retries": RETRY_CONFIG["count"],
+        "retry_delay": timedelta(seconds=RETRY_CONFIG["delay_seconds"]),
+        "retry_exponential_backoff": True,  # pause doubles per attempt (+ deterministic jitter)
+        "max_retry_delay": timedelta(seconds=RETRY_CONFIG["max_delay_seconds"]),
+        "on_failure_callback": create_asana_incident,  # only after the LAST attempt
     },
     tags=["portfolio", "phase-6", f"env:{PIPELINE_ENV}"],
 ) as dag:
@@ -131,16 +148,20 @@ with DAG(
         extract_postgres = BashOperator(
             task_id="extract_postgres",
             bash_command=f"python {SCRIPTS_DIR}/extract.py --start '{WINDOW_START_WITH_LOOKBACK}' --end '{WINDOW_END}'",
+            execution_timeout=timedelta(minutes=TIMEOUT_MINUTES["extract"]),
         )
 
         extract_github = BashOperator(
             task_id="extract_github",
             bash_command=f"python {SCRIPTS_DIR}/github_extract.py --start '{WINDOW_START}' --end '{WINDOW_END}'",
+            execution_timeout=timedelta(minutes=TIMEOUT_MINUTES["extract"]),
         )
 
     validate_raw = BashOperator(
         task_id="validate_raw",
         bash_command=f"python {SCRIPTS_DIR}/validate.py",
+        execution_timeout=timedelta(minutes=TIMEOUT_MINUTES["validate"]),
+        retries=0,  # quarantined rows = deterministic failure: a retry would fail the same way
     )
 
     with TaskGroup("spark_merge") as spark_merge:
@@ -153,6 +174,7 @@ with DAG(
         dbt_source_freshness = BashOperator(
             task_id="dbt_source_freshness",
             bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} source freshness --target {PIPELINE_ENV}",
+            execution_timeout=timedelta(minutes=TIMEOUT_MINUTES["dbt"]),
         )
 
         # dbt build = unit tests + run + data tests in dependency order (a failing
@@ -160,6 +182,7 @@ with DAG(
         dbt_build = BashOperator(
             task_id="dbt_build",
             bash_command=f"cd {DBT_PROJECT_DIR} && {DBT_BIN} build --target {PIPELINE_ENV} {DBT_BUILD_FLAGS}",
+            execution_timeout=timedelta(minutes=TIMEOUT_MINUTES["dbt"]),
         )
 
     # extract_postgres.output = the last line extract.py printed (XCom), e.g.

@@ -2,3 +2,13 @@
 schedule: "0 3 * * *"   # 03:00 UTC, after dev: no concurrent MERGE on shared Iceberg tables
 dbt:
   build_flags: "--exclude-resource-type unit_test"   # unit tests already ran in dev
+# Step 6.5: retries with exponential backoff + per-stage timeouts.
+retries:
+  count: 3                  # prod: nobody watches at 03:00, give transient errors more time
+  delay_seconds: 120        # 2-4 min, 4-8 min, 8-16 min (Airflow doubles + jitter)
+  max_delay_seconds: 1800   # cap for the doubling
+execution_timeout_minutes:  # same as dev here (shared mocked data); in a company prod volume decides
+  extract: 10
+  validate: 10
+  spark_merge: 15
+  dbt: 20

@@ -68,6 +68,9 @@ services:
       AWS_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}          # read by Java SDKs (cheat sheet 23.4)
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-central-1}  # read by boto3
       GITHUB_TOKEN: ${GITHUB_TOKEN}
+      # Step 6.5: on_failure_callback opens an Asana task (dags/alerting/asana.py).
+      ASANA_TOKEN: ${ASANA_TOKEN}            # Personal Access Token, only in .env
+      ASANA_PROJECT_ID: ${ASANA_PROJECT_ID}  # number from the project's URL
       # Absolute path of this repo ON THE HOST. DockerOperator asks the host's
       # Docker daemon to start the Spark container, and bind-mount sources are
       # resolved by that daemon -- so they must be host paths, not
