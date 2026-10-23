@@ -1589,13 +1589,201 @@ wcześniej, że nic z niego nie brakuje na `main`).
   deduplikacja (komentarz zamiast nowego zadania). W firmie alert (Slack,
   PagerDuty) zamyka się sam po ustąpieniu problemu, a ticket incydentu zamyka
   człowiek po ustaleniu przyczyny (czy nie ma dziury w danych, dlaczego baza padła).
+- **Gdzie jest ID projektu w Asanie i jak zrobić PAT?** (przy podłączaniu
+  alertu) ID to liczba po `/project/` w adresie projektu
+  (`app.asana.com/1/<workspace>/project/<ID>/list/...`; pierwsza liczba to
+  workspace, nie projekt); w aplikacji desktopowej bez paska adresu: strzałka
+  przy nazwie projektu → „Copy project link”. PAT: awatar → Settings → Apps →
+  View developer console → Personal access tokens → „+ Create new token”; token
+  widać tylko raz. PAT działa jak hasło do całego konta, zadania powstają „jako
+  Ty”; w firmie token konta technicznego z vaulta.
+- **Dlaczego VS Code pokazuje moje zmiany „na main”, skoro nic nie
+  commitowałem?** (po edycjach plików, przed utworzeniem gałęzi) Niezacommitowane
+  zmiany są w working tree, nie na żadnej gałęzi; `git switch -c <gałąź>` zabiera
+  je ze sobą, a na gałąź trafiają dopiero commitem. Dlatego gałąź wystarczy
+  utworzyć przed commitem. Liczby przy plikach w VS Code (`8`, `1`) to
+  ostrzeżenia Pylance: lokalny `.venv` nie ma Airflow, więc edytor nie rozpoznaje
+  importów; prawdziwy test to `airflow dags list-import-errors` w kontenerze.
+- **Czy przy teście awarii mam coś uruchamiać?** (po zatrzymaniu bazy) Nie:
+  scheduler sam startuje task, sam robi retry i sam woła callback; obserwuje się
+  Grid, logi kolejnych prób i Asanę.
+- **Dlaczego UI pokazuje run „23.10”, a CLI chce 22.10?** (przy `failed-deps`)
+  Grid w Airflow 2.9 pokazuje koniec okna (moment, od którego run mógł
+  wystartować), a `execution_date` w `run_id` to data logiczna = początek okna.
+  Komendy CLI biorą datę logiczną albo `run_id`; najpewniej podawać `run_id`
+  (np. `scheduled__2026-10-22T00:00:00+00:00`) z `airflow dags list-runs`.
+- **Po co dwa dbt (Mac i obraz Airflow), jak to jest w firmie i co to CI?**
+  (dopytanie po wyjaśnieniu instalacji) Jeden kod modeli, jeden program
+  zainstalowany w dwóch miejscach, w których ten kod musi działać: na Macu do
+  szybkiej pracy (`dbt run --select`, rozszerzenie dbt w VS Code) i w obrazie
+  Airflow, bo tam o 00:00 scheduler sam uruchamia `dbt build`. Jedna instalacja
+  jest możliwa (praca przez `docker exec` albo devcontainer, czyli VS Code
+  otwierający repo wewnątrz kontenera). CI (Continuous Integration) to automat
+  (u nas byłyby to GitHub Actions, `.github/workflows/`), który przy każdym PR
+  robi lint, test importu DAG-ów i `dbt build` zmienionych modeli w schemacie CI
+  (merge zablokowany do zielonych checków), a po merge'u buduje obraz, nadaje mu
+  wersję (hash commita) i wysyła do rejestru (ECR/ACR); CD (Continuous
+  Deployment) wdraża TEN SAM obraz na dev, potem na prod. W firmie obraz buduje
+  się raz, w CI, nigdy na laptopie, więc dev i prod uruchamiają bit w bit ten sam
+  dbt; laptop: venv z lockfile'a sprawdzanego w CI albo devcontainer. U nas tego
+  nie ma, bo nie ma jeszcze CI (faza 7) ani serwera i rejestru (dev i prod to
+  dwa komplety kontenerów na Macu; budowa obrazu w CI ma sens dopiero z
+  Airflowem w chmurze, faza 8). Faza 7 zacznie od checków na PR, przy okazji
+  jeden obraz dla wszystkich serwisów Airflow zamiast osobnego builda per serwis.
 
-**Następny krok:** commit + PR z `feat/retries-alerting`; potem 6.6 (backfill
-11–13.09; przed nim sprawdzić runy testowe 13.09/14.09 w metadanych, bo 13.09 ma
-`extract_*` pod starymi ID) i 6.7 (README na pytaniach kontrolnych z planu, 2–3
-testy `dbt-expectations`, dowody do 26.10). Po 27.10: auto-zamykanie i
-deduplikacja zadań w Asanie, `dagrun_timeout` z alertem na poziomie DAG-a; potem
-faza 7 (CI).
+**Git 23.10:** PR z 6.5 zmergowany (squash `15118df`), lokalna gałąź usunięta;
+`git pull` sam usunął `origin/feat/retries-alerting` (gałąź na GitHubie
+skasowana przy merge'u, `fetch.prune` już włączone).
+
+**Zrobione (6.6, 23.10): backfill 11–13.09.**
+- Przygotowanie: usunięty run testowy `manual__2026-09-13` (taski `extract_*`
+  pod starymi ID sprzed TaskGroup; backfill wszedłby w ten istniejący run).
+  `manual__2026-09-14` zostaje (patrz pytania niżej).
+- Komenda: `docker compose exec airflow-scheduler airflow dags backfill
+  ecommerce_pipeline -s 2026-09-11 -e 2026-09-13 2>&1 | tail -n 25` (`-s/-e` =
+  które runy, obie granice włącznie; okna i zakładkę liczy Airflow). Wynik: 3/3
+  runy, 24/24 taski sukces, ok. 4,5 min na dzień, dni po kolei
+  (`depends_on_past` + `max_active_runs=1`).
+
+| Dzień | Okno (z zakładką) | Wiersze z Postgresa | Walidacja | Iceberg po MERGE | dbt build |
+|---|---|---|---|---|---|
+| 11.09 | 10.09 23:50 → 12.09 00:00 | 18 | 0 w kwarantannie | 51 / 30 / 200 / 502 / 160 / 493 | `PASS=69 ERROR=0` |
+| 12.09 | 11.09 23:50 → 13.09 00:00 | 21 | 0 | bez zmian | `PASS=69 ERROR=0` |
+| 13.09 | 12.09 23:50 → 14.09 00:00 | 26 (jak test z 21.10) | 0 | bez zmian | `PASS=69 ERROR=0` |
+
+- Freshness `WARN` każdego dnia (dane kończą się 15.09, oczekiwane). Żadnego
+  nowego zadania w Asanie. Run 13.09 przetworzył to samo okno co
+  `manual__2026-09-14` (run ręczny z datą D = okno D-1): ten sam dzień drugi raz,
+  bez duplikatów.
+- **Co backfill udowadnia, a czego nie.** Udowadnia: okna per dzień, zakładkę,
+  bramkę jakości, kolejność dni oraz brak duplikatów i fałszywych wersji SCD2
+  przy ponownym przetwarzaniu (`no changed rows -- nothing to insert`). Nie
+  udowadnia przetwarzania „swojego dnia”: `merge_*` czytają CAŁY raw i
+  deduplikują (`orders: incoming batch (deduped) = 200 rows` przy 18 wierszach z
+  extractu), słabość znana z 6.4. Koszt przy backfillu 3 miesięcy: każdy dzień
+  przetwarza całą dotychczasową historię (czas rośnie kwadratowo), a raw puchnie,
+  bo każdy run dopisuje swoje pliki (append-only z `run_id`). Poprawka po 27.10:
+  `merge_*` czytają tylko pliki bieżącego runu (ścieżki z extractu przez XCom
+  albo filtr po `run_id`). To też odpowiedź na pytanie kontrolne z planu „jak
+  zrobić backfill 3 miesięcy?”.
+- Dowody zrobione 23.10: zrzut Grida (3 zielone runy `backfill__`) i zamkniętego
+  zadania w Asanie.
+
+**Pytania z tego kroku i czego uczą:**
+- **Dlaczego nie usuwamy też runu 14.09?** (przed backfillem, po decyzji o
+  usunięciu 13.09) Ma już nowe ID tasków (powtórzony 22.10 z TaskGroupami; brak
+  mu tylko `dbt_source_freshness`, dodanego później), leży poza zakresem
+  backfillu (dla `depends_on_past` 11.09 nie ma nic wcześniej, 12.09 patrzy na
+  11.09, 13.09 na 12.09, nikt nie patrzy „w przód”) i jest dowodem pierwszego
+  pełnego runu z dbt `PASS=51`. Usuwa się tylko to, co realnie przeszkadza.
+- **Skąd „nowe” dane w Postgresie, skoro nikt do niego nie pisze?** (po wyniku
+  backfillu) Nie ma nowych danych. `postgres-source` zawiera dane seed
+  wygenerowane raz (`seed.py`) z datami w przeszłości do 15.09. Extract bierze
+  wiersze, których znacznik czasu wpada w okno runu, więc backfill tylko kroi
+  gotową historię na dni; 18/21/26 to liczba wierszy z danym dniem we wszystkich
+  6 tabelach. W firmie źródło żyje (aplikacja ciągle pisze), a backfill
+  odtwarza przeszłe dni z tych samych zasad okna.
+- **Dlaczego liczba wierszy różni się między dniami, a Iceberg nie rośnie?** (jw.)
+  Te wiersze są w Icebergu od fazy 3 (pierwsze pełne załadowanie). MERGE
+  porównuje po kluczu: fakty z istniejącym kluczem nic nie dopisują, wymiary
+  SCD2 tworzą nową wersję tylko przy zmianie atrybutu. Iceberg urośnie przy
+  prawdziwej zmianie: nowe zamówienie (nowy klucz) albo klient zmieniający kraj
+  (nowa wersja SCD2). Stąd pomysł na demonstrację w 6.7.
+
+**Zrobione (6.7, część 1, 23.10): symulator ruchu w źródle.**
+- Decyzja (Twoja): jeden plik `scripts/seed.py`, nie osobny skrypt; raz dziennie
+  wystarczy (pipeline ma dzienne okno, dwie porcje i tak trafiłyby do jednego
+  runu).
+- `seed.py`: `--mode init` (dotychczasowy, logika bez zmian; historia, raz, na
+  pustą bazę) i `--mode daily`: jeden dzień aktywności ze znacznikami między
+  dzisiejszą 00:00 UTC a teraz — 1–3 nowych klientów (Faker), 1–2 zmiany kraju
+  lub e-maila u starych klientów (nowe wersje SCD2), z szansą 50% zmiana ceny
+  produktu o 5–20% (SCD2 + nowy snapshot ceny w dzisiejszych zamówieniach),
+  5–15 nowych zamówień z pozycjami, historią statusów i w ok. 60% płatnością,
+  3–8 starych otwartych zamówień o krok dalej (pending → paid z płatnością albo
+  cancelled, paid → shipped, shipped → delivered). Historii nie zmienia, tylko
+  dopisuje. Ziarno losowania: `init` 42, `daily` data (inne dane co dzień,
+  powtarzalne w obrębie dnia). Zabezpieczenie dnia: zamówienie utworzone dziś =
+  porcja zrobiona → nic nie robi (idempotencja; DAG widzą oba Airflowy). Jedna
+  transakcja na całość. `DB_CONFIG` ze zmiennych środowiskowych jak w
+  `extract.py` (było `localhost` na sztywno, decyzja 8).
+- `dags/source_simulator.py`: jeden task `generate_daily_activity`
+  (`BashOperator`), retry i alert do Asany jak w pipelinie, `catchup=False`
+  (zdarzenia dostają znacznik „teraz”), harmonogram z configu: dev `30 23 * * *`
+  (30 min przed runem dev o 00:00, którego okno [D, D+1) zawiera nowe wiersze),
+  prod `null` (tylko ręcznie; oba środowiska czytają ten sam `postgres-source`).
+  Nie jest taskiem `ecommerce_pipeline`: generowanie źródła to nie część
+  pipeline'u (backfill przeszłości nie może dopisywać „dzisiejszych” danych).
+- `airflow-docker/requirements.txt`: `faker` (wersja z constraints Airflow;
+  lokalnie 40.39.0 z `uv.lock`).
+- Test: z Maca `--mode daily` dwa razy → „1 new customers, 1 customer changes,
+  1 price changes, 6 new orders, 8 order status transitions”, potem „already
+  generated -- nothing to do”. Przebudowa obrazu (`--profile prod up -d
+  --build`, 49 s, dev i prod odtworzone), `list-import-errors` pusto, `dags test
+  source_simulator` na schedulerze dev → „already generated” + SUCCESS (`faker`
+  w obrazie, połączenie przez zmienne środowiskowe, zabezpieczenie działa z
+  kontenera). Oba DAG-i w dev `is_paused = False` (`unpause` wypisał `True`, czyli
+  stan sprzed zmiany; sprawdzone przez `airflow dags list`).
+- Pierwszy prawdziwy przyrost: run dev o 00:00 UTC 24.10 (okno 23.10) przetworzy
+  wiersze wygenerowane 23.10 z Maca — wynik do zapisania 24.10.
+- Ruff SIM117 (zagnieżdżone `with`) poprawione w `main()`: `with connection,
+  connection.cursor() as cursor:`.
+- Mój błąd: edycje `seed.py` zacząłem na `main` (w working tree, bez commita),
+  gałąź `feat/source-simulator` powstała dopiero po Twojej uwadze. Zasada:
+  gałąź przed pierwszą edycją.
+
+**Pytania z tego kroku i czego uczą:**
+- **Czy seed musi być historyczny i w osobnym pliku?** (pomysł generowania
+  nowych rekordów z kombinacji imion, nazwisk i krajów) Nie: jeden plik z dwoma
+  trybami. Historia już leży w wolumenie Postgresa, `init` jest tylko do
+  zakładania środowiska od zera; tryb dzienny tylko dopisuje, więc backfill
+  przeszłych dni dalej jest ważnym testem. W firmie danych z prod (PII) nie
+  kopiuje się na dev: dane syntetyczne (Faker, SDV) albo zanonimizowana kopia;
+  do systemu źródłowego się nie pisze (cudza aplikacja), u nas `postgres-source`
+  ją udaje.
+- **Raz czy dwa razy dziennie?** Raz: pipeline bierze okno całego dnia, więc dwie
+  porcje trafiłyby do jednego runu. Dwa przebiegi mają sens dopiero przy
+  pipelinie co kilka godzin (wtedy zabezpieczenie „ten dzień” → „ta połowa
+  dnia”). Ograniczenie lokalne: Airflow działa, gdy Mac nie śpi; po wybudzeniu
+  symulator wygeneruje dane z bieżącą datą.
+- **Co dokładnie dodałeś w `seed.py`?** Dwa tryby (`argparse`), ziarno per tryb,
+  `DB_CONFIG` z env, „pokrętła” `DAILY_*`, dotychczasowy `main()` jako
+  `seed_initial()`, funkcje dnia: losowanie godzin zdarzeń bez przyszłości,
+  wolny e-mail (`UNIQUE`), zabezpieczenie dnia, nowi klienci, zmiany klientów,
+  zmiana ceny, nowe zamówienia (klient może zamówić dopiero po założeniu konta),
+  postęp otwartych zamówień, `simulate_daily_activity()` składające dzień.
+- **Dlaczego `--profile prod` tylko w pierwszej komendzie i czy dev też dostał
+  `faker`?** Profil to flaga jednej komendy, nie stan. `up --build` tworzy i
+  przebudowuje, więc musi objąć prod; `exec` wskazuje działający kontener po
+  nazwie (`airflow-scheduler` = dev, `airflow-scheduler-prod` = prod). Dev też
+  został odtworzony (`Started` przy serwisach bez `-prod`, `Running` = nietknięte),
+  dowód: `dags test` na schedulerze dev zaimportował `faker`.
+- **Dlaczego `--profile prod` uruchamia dev i prod i jak uruchomić sam prod?**
+  Serwis bez `profiles:` jest aktywny zawsze, profil tylko DOKŁADA serwisy. Sam
+  prod: nazwy serwisów w komendzie (`... up -d --build airflow-init-prod
+  airflow-webserver-prod airflow-scheduler-prod`; `depends_on` dociąga bazę
+  proda). Porządniej: profil `dev` dla serwisów dev (faza 7). W firmie dev i
+  prod to osobne wdrożenia.
+- **Skąd w VS Code „Env var required but not provided: DBT_SNOWFLAKE_ACCOUNT”?**
+  Rozszerzenie dbt Power User parsuje projekt z profilem używającym `env_var()`,
+  a od 22.10 zmienne są tylko w `.env`. dbt 1.12 sam wczytuje `.env`, ale tylko
+  z bieżącego katalogu, a projekt dbt jest w `dbt_portfolio/`. Rozwiązanie bez
+  kopiowania sekretów: `ln -s ../.env dbt_portfolio/.env` + przeładowanie okna
+  (`.env` w `.gitignore` obejmuje też podkatalogi). W firmie: menedżer sekretów
+  albo direnv. Pipeline tego nie dotyczy.
+- **Co znaczy ostrzeżenie Ruff SIM117?** Dwa zagnieżdżone `with` można zapisać
+  jako jedno z kilkoma kontekstami; działanie identyczne. W firmie takie uwagi
+  zatrzymuje pre-commit hook i check w CI (faza 7).
+
+**Następny krok:** commit + PR z `feat/source-simulator` (razem z wpisem 6.6 i
+`.gitignore`). 24.10: sprawdzić run dev z 00:00 (okno 23.10: liczby w Icebergu
+rosną, nowe wersje SCD2 w `customer`/`product`, dbt bez błędów) i Snowflake
+(nowe wiersze, RLS i maska na nich). Potem do 26.10: 2–3 testy
+`dbt-expectations`, README na pytaniach kontrolnych z planu, zrzuty dowodów,
+`CLAUDE.md` (symulator, nazwa cheat sheetu). Po 27.10: `merge_*` tylko na
+plikach bieżącego runu, auto-zamykanie i deduplikacja zadań w Asanie,
+`dagrun_timeout` z alertem DAG-a; faza 7 (CI, Ruff w pre-commit, jeden obraz
+Airflow, profil `dev` w compose).
 
 ---
 

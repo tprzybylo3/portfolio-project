@@ -18,7 +18,7 @@ logs/
 .DS_Store
 
 # local-only files, deliberately kept out of the repo
-DE_Interview_Cheatsheet-2.docx
+DE_Interview_Cheatsheet*.docx
 scripts/debug_issues3.py
 
 # Terraform

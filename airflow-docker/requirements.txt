@@ -15,3 +15,7 @@ apache-airflow-providers-postgres
 
 # Some scripts load .env locally; harmless no-op inside the container.
 python-dotenv
+
+# Used by scripts/seed.py --mode daily (DAG source_simulator): synthetic
+# names, emails and countries. Same library as the local .venv (pyproject.toml).
+faker

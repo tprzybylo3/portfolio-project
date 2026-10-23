@@ -12,3 +12,7 @@ execution_timeout_minutes:  # same as dev here (shared mocked data); in a compan
   validate: 10
   spark_merge: 15
   dbt: 20
+# Step 6.7: DAG source_simulator -- no schedule here (null = manual only): both
+# deployments read the same postgres-source, dev's generator feeds both.
+source_simulator:
+  schedule: null

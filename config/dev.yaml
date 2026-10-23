@@ -12,3 +12,7 @@ execution_timeout_minutes:  # ~5-10x a normal run: a hung task fails instead of 
   validate: 10
   spark_merge: 15
   dbt: 20
+# Step 6.7: DAG source_simulator (scripts/seed.py --mode daily) -- plays the source
+# application. 23:30 UTC = half an hour before this environment's pipeline run.
+source_simulator:
+  schedule: "30 23 * * *"
