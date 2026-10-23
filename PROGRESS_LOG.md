@@ -1386,9 +1386,42 @@ testach dbt; cheat sheet 25.18–25.19).
   workspace'y dla dev i prod w jednym koncie, plus katalogi per środowisko w
   Unity Catalog. U nas jedna baza `PORTFOLIO_DBT`, schematy `dbt_dev_*` i
   `dbt_prod_*`.
+- **Czy to znaczy, że nie udostępniłem folderu kontenerowi?** Nie: montowanie
+  jest w compose, Docker Desktop domyślnie udostępnia cały `/Users`, a o 22:58
+  DAG czytał `dev.yaml` bez błędu. Zawiódł widok w trakcie działania: pliki
+  zmieniłem z innej warstwy niż VS Code i Docker Desktop tego nie zauważył.
+  Rozpoznanie: `ls` w kontenerze pokazuje co innego niż na Macu.
+- **Co robi `--force-recreate`?** Usuwa wskazane kontenery i tworzy nowe z tego
+  samego obrazu i konfiguracji, nawet gdy nic się nie zmieniło (zwykłe `up -d`
+  robi to tylko przy zmianie). Przetrwa wszystko poza kontenerem (wolumeny z
+  bazami, zamontowane foldery); znika tylko to, co zapisano wewnątrz. Firma:
+  restart wdrożenia (`kubectl rollout restart`), kontenery są bezstanowe.
+- **Czy mam osobny scheduler dla dev i prod?** Tak, każde środowisko ma swój
+  komplet: baza metadanych, init, webserver, scheduler (dev bez dopisku, bo
+  był pierwszy; prod z `-prod`). Wspólne są `postgres-source` i
+  `spark-iceberg`. W firmie nazwy się nie mieszają, bo to osobne klastry.
 - **Co to Helm?** Menedżer wdrożeń dla Kubernetesa: chart (szablon całego
   Airflowa) + `values-dev.yaml`/`values-prod.yaml`; CI robi `helm upgrade` po
   merge'u. Ten sam pomysł co nasz blok compose + nadpisania proda.
+
+**Pytania o jakość danych i część Advanced planu (23.10):**
+- **Gdzie jest Great Expectations?** W planie w części Advanced (pozycja 13),
+  jako nadbudowa nad `validate.py` w warstwie raw; w fazie 2 świadomie wybrana
+  lekka własna walidacja. W firmach GE jest dziś rzadszy: gdzie jest dbt,
+  zwykle wystarczają testy dbt (+ `dbt-expectations`, Elementary), Soda jako
+  reguły w YAML-u, GE głównie w pipeline'ach Python/Spark przed warehouse'em.
+- **Co jeszcze jest w Advanced?** 14 Elementary/observability (pokrywa się z
+  fazą 9), 15 porównanie z Databricks w `/experiments/databricks` (Free Edition
+  nie wygasa), 16 rozbudowane governance (częściowo: RLS + maski na `customer`
+  i `fct_orders`; dalej tylko do 27.10).
+- **GE czy testy dbt, czy kilka naraz?** Decyzja: kilka narzędzi na tych samych
+  regułach (klucz, dozwolone statusy, kwota ≥ 0, wolumen), żeby różnice było
+  widać wprost: własny `validate.py` (punkt odniesienia), GE i Soda Core na raw
+  (po 27.10, zamiast samej poprawki `validate.py`), 2–3 testy `dbt-expectations`
+  w Snowflake (przed 27.10, w 6.7). Porównanie w ADR, jak dlt.
+- Pytania kontrolne z planu projektu („co, jeśli pipeline uruchomi się dwa
+  razy?”, „jak zrobić backfill 3 miesięcy?”, „jak wykryć ciche uszkodzenie
+  danych?”) posłużą za szkielet README w 6.7.
 
 **Następny krok:** 6.5 (retry, alert), 6.6 (backfill 11–13.09), 26.10 zebranie
 dowodów; potem faza 7 (CI).
