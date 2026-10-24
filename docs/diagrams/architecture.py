@@ -69,6 +69,7 @@ with Diagram(
     with Cluster("AWS", graph_attr=CLUSTER_ATTR):
         with Cluster("Raw (bronze)", graph_attr=CLUSTER_ATTR):
             raw = S3("S3 raw\nappend-only")
+            quarantine = S3("S3 quarantine\nrejected rows")
         with Cluster("Lakehouse (silver)", graph_attr=CLUSTER_ATTR):
             spark = Spark("Spark MERGE\n(Docker)")
             iceberg_tables = S3("S3 silver\nIceberg tables")
@@ -108,6 +109,7 @@ with Diagram(
     postgres >> Edge(**DATA_FLOW) >> ingestion
     github >> Edge(**DATA_FLOW) >> ingestion
     ingestion >> Edge(**DATA_FLOW) >> raw
+    ingestion >> Edge(**METADATA) >> quarantine  # validate.py: rows that fail the quality gate
     raw >> Edge(**DATA_FLOW) >> spark
     spark >> Edge(**DATA_FLOW) >> iceberg_tables
     spark >> Edge(**METADATA) >> glue_catalog
@@ -128,7 +130,9 @@ with Diagram(
     # its own invisible column, which pushed the Snowflake icons apart unevenly; an xlabel is
     # attached to the arrow without taking a column
     airflow >> Edge(**ORCHESTRATION) >> dbt
-    airflow >> Edge(constraint="false", **ORCHESTRATION) >> ingestion
+    # into the bottom of ingestion: the straight line then passes under the Raw frame
+    # instead of through the "S3 raw" label
+    airflow >> Edge(constraint="false", headport="s", **ORCHESTRATION) >> ingestion
     airflow >> Edge(constraint="false", **ORCHESTRATION) >> spark
     airflow >> Edge(**METADATA) >> asana
     # dbt sends SQL to Snowflake, which builds the staging/intermediate views and the marts
