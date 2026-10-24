@@ -1775,15 +1775,149 @@ skasowana przy merge'u, `fetch.prune` już włączone).
   jako jedno z kilkoma kontekstami; działanie identyczne. W firmie takie uwagi
   zatrzymuje pre-commit hook i check w CI (faza 7).
 
-**Następny krok:** commit + PR z `feat/source-simulator` (razem z wpisem 6.6 i
-`.gitignore`). 24.10: sprawdzić run dev z 00:00 (okno 23.10: liczby w Icebergu
-rosną, nowe wersje SCD2 w `customer`/`product`, dbt bez błędów) i Snowflake
-(nowe wiersze, RLS i maska na nich). Potem do 26.10: 2–3 testy
-`dbt-expectations`, README na pytaniach kontrolnych z planu, zrzuty dowodów,
-`CLAUDE.md` (symulator, nazwa cheat sheetu). Po 27.10: `merge_*` tylko na
-plikach bieżącego runu, auto-zamykanie i deduplikacja zadań w Asanie,
-`dagrun_timeout` z alertem DAG-a; faza 7 (CI, Ruff w pre-commit, jeden obraz
-Airflow, profil `dev` w compose).
+**Git 23.10:** PR symulatora zmergowany (squash `84ece27`, #22). Weszła w nim też
+zmiana `.gitignore`: wzorzec `DE_Interview_Cheatsheet*.docx` zamiast samego
+`-2`, bo nowa kopia cheat sheetu `-3` nie była ignorowana.
+
+**Zrobione (6.7, część 2, 23–24.10): pierwszy prawdziwy przyrost przez cały pipeline.**
+- Ręczny run `airflow dags test ecommerce_pipeline 2026-10-24` (okno 23.10, 22:00
+  UTC): 57 wierszy z Postgresa (2 klientów, 1 produkt, 14 zamówień = 6 nowych +
+  8 zmienionych statusów, 15 pozycji, 7 płatności, 18 wpisów historii),
+  walidacja bez kwarantanny, dbt `PASS=69 ERROR=0`.
+
+| Tabela w Icebergu | Przed | Po | Skąd różnica |
+|---|---|---|---|
+| customer (wszystkie wersje) | 51 | 53 | +1 nowy klient, +1 wersja SCD2 (zmiana e-maila) |
+| product (wszystkie wersje) | 30 | 31 | +1 wersja SCD2 (zmiana ceny) |
+| orders | 200 | 206 | +6 nowych (8 przejść statusów aktualizuje istniejące) |
+| order_items | 502 | 517 | +15 pozycji |
+| payments | 160 | 167 | 4 opłacone tego samego dnia + 3 przejścia pending → paid |
+| order_status_history | 493 | 511 | 6 × pending + 4 × paid + 8 przejść |
+
+- Snowflake: `fct_orders` ma 6 nowych zamówień (201–206: 4 `paid` z
+  `paid_amount` = wartość, 2 `pending` z 0). SCD2 w tabeli Iceberg: klient 39
+  (zmiana e-maila) ma dwie wersje, `valid_to` starej = `valid_from` nowej, nowa
+  `is_current = TRUE`; klient 51 (nowy) jedną. Analityk widzi 0 z 6 nowych
+  zamówień — żadne nie jest z DE (WS, IT, CA, KG, LV, ID), czyli RLS działa na
+  świeżych wierszach. Liczniki `COUNT(*)` per rola do powtórzenia pojedynczo
+  (worksheet przy kilku zaznaczonych zapytaniach pokazuje tylko ostatni wynik).
+- Nocny run z harmonogramu `scheduled__2026-10-23` (00:00–00:01:29 UTC): to samo
+  okno drugi raz → znów 57 wierszy, tabele bez zmian (53 / 31 / 206 / 517 / 167 /
+  511), SCD2 `no changed rows -- nothing to insert`, dbt `PASS=69`.
+  Idempotentność potwierdzona na prawdziwym przyroście.
+
+**Odkryte przy tym:**
+- **`dags test` obok działającego schedulera.** Run ląduje we wspólnej bazie
+  metadanych, a scheduler (DAG włączony) też zaczyna wykonywać jego taski:
+  `extract_github` wykonał się 3 razy („Executor reports task instance …
+  finished (success) although the task says it's queued”). Szkody brak dzięki
+  idempotencji (raw z GitHuba dostał trzy kopie). Zasada: `dags test` tylko na
+  wstrzymanym DAG-u albo w osobnym środowisku.
+- **Kolizja dat.** Run ręczny z datą logiczną 24.10 zajmuje tę datę; scheduler nie
+  utworzyłby swojego runu za 24.10 → cicha dziura w danych (żadnej porażki, więc
+  żadnego alertu). `manual__2026-10-24` usunięty po zebraniu wyników (Browse →
+  DAG Runs). Mój błąd: zaproponowałem tę komendę bez sprawdzenia skutków dla
+  kolejnych runów.
+- **Niepełne okno.** GitHub: 627 wierszy przy runie o 22:00 UTC (dzień 23.10 jeszcze
+  trwał), 635 w nocy. Dlatego run za dzień D startuje dopiero D+1 o 00:00.
+- **Trigger `set_updated_at` w Postgresie** (`ddl.sql`) przy każdym `UPDATE` ustawia
+  `updated_at = now()`, więc godziny zmian podawane przez symulator są
+  nadpisywane prawdziwym czasem zmiany: `valid_from` nowej wersji klienta 39 =
+  20:59:56 UTC (moment uruchomienia). Realistyczne (tak działa prawdziwa
+  aplikacja); do poprawy komentarz w `seed.py`, który sugeruje losowe godziny.
+- **`Duration` ok. miesiąca przy `manual__2026-09-14`:** artefakt `dags test` (Start
+  Date = data logiczna 14.09, End Date = faktyczny koniec 22.10); naprawdę ok.
+  5 min. Run z harmonogramu ma normalne 1 min 29 s.
+- **`-0700` w wynikach Snowflake'a:** `TIMESTAMP_LTZ` wyświetlany w strefie sesji
+  (domyślnie Los Angeles); 13:59:56 -0700 = 20:59:56 UTC. Staging dbt
+  konwertuje do UTC, więc modele od tego nie zależą.
+
+**Pytania z tego kroku i czego uczą:**
+- **Czy teraz mam dwa DAG-i?** (po dodaniu symulatora) Tak, każdy Airflow wczytuje
+  oba pliki: `source_simulator` (dev 23:30 UTC, prod tylko ręcznie) i
+  `ecommerce_pipeline` (dev 00:00, prod 03:00). Łączy je tylko czas, bez jawnej
+  zależności — celowo, bo symulator gra cudzą aplikację. W firmie przy zależności
+  między własnymi DAG-ami: Datasets (data-aware scheduling, Airflow 2.4+),
+  `TriggerDagRunOperator`, `ExternalTaskSensor`; przy cudzym źródle: okno z
+  zakładką + sprawdzanie świeżości.
+- **Czy możemy sprawdzić przyrost od razu, bez czekania na noc?** Technicznie tak
+  (`dags test` z datą 24.10), ale z dwoma skutkami ubocznymi opisanymi wyżej
+  (podwójne wykonanie przez scheduler, zajęta data). Właściwy sposób: poczekać na
+  run z harmonogramu albo przeliczyć zamknięty dzień backfillem/Clear.
+- **Dlaczego to jest „test”?** Nazwa myli: `dags test` = uruchom cały DAG raz,
+  teraz, w terminalu, bez schedulera; taski działają naprawdę (S3, Iceberg,
+  Snowflake). Brak retry z przerwą, brak `max_active_runs`. W firmie: narzędzie
+  developera lokalnie i w CI; na prod runy uruchamia tylko scheduler.
+- **Dlaczego w `dags test` podaje się datę dnia następnego?** W Airflow 2 data runu z
+  harmonogramu/backfillu = dzień danych (początek okna), run startuje po jego
+  końcu. W runie ręcznym podana data = moment uruchomienia, a Airflow przypisuje
+  ostatni zakończony dzień przed nią: 24.10 → okno 23.10. Trigger z datą z
+  przyszłości jest domyślnie zablokowany (`allow_trigger_in_future = False`).
+- **Dlaczego jeden run w DAG Runs trwa miesiąc?** Artefakt `dags test` (wyżej).
+
+**Zrobione (6.7, część 3a, 24.10): testy `dbt-expectations` na `fct_orders`.**
+- `packages.yml`: `metaplane/dbt_expectations` 0.10.10 (utrzymywana kontynuacja
+  zarchiwizowanego `calogica/dbt_expectations`; dbt >=1.7 <3.0), wersja
+  przypięta jak `dbt_utils`; `dbt deps` dociągnął zależność `dbt_date` 0.21.0,
+  `package-lock.yml` zaktualizowany. `dbt_packages/` w `.gitignore`; Airflow
+  widzi pakiet bez przebudowy obrazu, bo `dbt_portfolio/` jest zamontowany (w
+  firmie `dbt deps` w CI/przy budowie obrazu — faza 7).
+- Trzy testy w `models/marts/schema.yml`, każdy łapie coś, czego dotychczasowe
+  nie widziały:
+
+| Test | Kolumna | Co łapie | Poziom |
+|---|---|---|---|
+| `expect_row_values_to_have_recent_data` (≤ 2 dni) | `order_date` | cichy zator: mart przestał dostawać dane, choć żaden task nie padł (lekcja z 6.5) | `warn` |
+| `expect_column_values_to_match_regex` (`^[A-Z]{2}$`) | `country_at_order` | złamany kontrakt formatu ze źródła; RLS filtruje po tej wartości, więc zły format = błędne uprawnienia | `error` |
+| `expect_column_values_to_be_between` (0–10 000) | `gross_order_value` | anomalia wartości (zdublowane pozycje, zła cena); pułap z kształtu danych: ceny 5–500, max 4 pozycje × 3 szt. ≈ 6000 | `warn` + `store_failures` |
+
+- Pierwsze uruchomienie: test świeżości `ERROR` (`Required var
+  'dbt_date:time_zone' not found`). Naprawa: `vars: 'dbt_date:time_zone': 'UTC'`
+  w `dbt_project.yml` (UTC, bo staging konwertuje wszystkie znaczniki do UTC).
+  Drugie uruchomienie w kontenerze dev (`dbt test --select fct_orders --target
+  dev`): `PASS=20 WARN=0 ERROR=0`. Ostatnia praca wymagająca Snowflake'a przed
+  końcem triala zrobiona.
+- `seed.py`: komentarz o triggerze `set_updated_at` (wszystkie tabele poza
+  `order_status_history`): godziny podawane w UPDATE są nadpisywane przez
+  `now()`, losowe czasy działają tylko przy INSERT i w `changed_at` historii.
+
+**Pytania z tego kroku i czego uczą:**
+- **Co znaczy „długość komendy to cena uruchamiania dbt w kontenerze”?** (przy
+  komendzie testów) Sam test to `dbt test --select fct_orders --target dev`;
+  reszta to dojście do dbt w kontenerze: `docker compose exec airflow-scheduler`
+  (tam profil i zmienne są gotowe: `DBT_PROFILES_DIR` na zamontowany profil,
+  zmienne z `.env`, klucz tylko do odczytu), `bash -c` (kilka poleceń naraz),
+  `cd` do zamontowanego projektu, pełna ścieżka do dbt (osobny venv poza
+  `PATH`). Na Macu krótka wersja nie działa, bo dbt czyta `.env` tylko z
+  bieżącego katalogu (`dbt_portfolio/`), a `.env` leży w korzeniu repo; pomaga
+  dowiązanie `ln -s ../.env dbt_portfolio/.env`. W firmie developer ma profil i
+  dostęp skonfigurowane lokalnie (albo dbt Cloud IDE / devcontainer) i pisze
+  `dbt test -s fct_orders`; długa ścieżka to sposób schedulera, nie człowieka.
+- **Skąd wiadomo, że test padł na kompilacji, zanim cokolwiek sprawdził?** (po
+  pierwszym `ERROR`) Trzy sygnały: treść `Compilation Error` (dbt najpierw
+  kompiluje Jinja/YAML do SQL, potem wykonuje SQL w hurtowni — tu SQL nie
+  powstał); czas `0.02s` wobec 0.7–1.1 s pozostałych (za mało na zapytanie do
+  Snowflake'a); wynik `ERROR`, nie `FAIL`. `FAIL n` = test się wykonał i znalazł
+  n złych wierszy (problem w danych); `WARN` = to samo przy `severity: warn`;
+  `ERROR` = testu nie dało się wykonać (kompilacja, brak tabeli, błąd SQL —
+  problem w kodzie/konfiguracji). W firmie od tego zależy, kto reaguje: `FAIL` —
+  zespół danych/właściciel źródła, `ERROR` — autor ostatniej zmiany w kodzie.
+  Lekcja: filtr `grep` zjadł linię z powodem błędu; pełny powód jest w
+  `dbt_portfolio/logs/dbt.log`.
+- **Dlaczego `dbt_date:time_zone` = UTC?** Test świeżości porównuje `order_date` z
+  „teraz”; oba muszą być w tej samej strefie, a staging trzyma wszystko w UTC.
+  Strefę biznesu (np. `Europe/Warsaw`) ustawia się, gdy „dzień” w raportach ma
+  się liczyć według czasu klienta.
+
+**Następny krok:** commit + PR z `feat/dbt-expectations` (testy, zmienna `dbt_date`,
+komentarz w `seed.py`, wpisy 6.7 cz. 2 i 3a). Potem do 26.10: zrzuty dowodów
+(liczniki `COUNT(*)` per rola pojedynczo), README na pytaniach kontrolnych z
+planu, `CLAUDE.md` (symulator, `dbt_expectations`, nazwa cheat sheetu), cheat
+sheet (pułapki `dags test`, data logiczna runu ręcznego, niepełne okno,
+`FAIL`/`WARN`/`ERROR`). Po 27.10: `merge_*` tylko na plikach bieżącego runu,
+auto-zamykanie i deduplikacja zadań w Asanie, `dagrun_timeout` z alertem DAG-a;
+faza 7 (CI, Ruff w pre-commit, `dbt deps` w CI, jeden obraz Airflow, profil
+`dev` w compose).
 
 ---
 

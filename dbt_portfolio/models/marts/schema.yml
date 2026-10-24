@@ -52,6 +52,17 @@ models:
         description: UTC order timestamp.
         data_tests:
           - not_null
+          # Silent stall (step 6.5 lesson): a run that never starts fails no
+          # task, so no alert fires. If the newest order is older than 2 days,
+          # the mart stopped receiving data even though everything is "green".
+          # warn = visible signal without blocking; in a company this would be
+          # routed to the on-call alert.
+          - dbt_expectations.expect_row_values_to_have_recent_data:
+              arguments:
+                datepart: day
+                interval: 2
+              config:
+                severity: warn
       - name: order_status
         description: Current status of the order.
         data_tests:
@@ -64,6 +75,12 @@ models:
           Row access policy country_rls applies.
         data_tests:
           - not_null
+          # Contract with the source: ISO 3166-1 alpha-2. The row access
+          # policy filters on this value, so a wrong format (e.g. 'de',
+          # 'DEU', ' DE') silently changes what an analyst can see -> error.
+          - dbt_expectations.expect_column_values_to_match_regex:
+              arguments:
+                regex: "^[A-Z]{2}$"
       - name: current_country
         description: >
           Customer's country in the current SCD2 version. Masking policy
@@ -83,6 +100,17 @@ models:
         description: SUM(quantity * unit_price) over the order's lines; 0 if none.
         data_tests:
           - not_null
+          # Plausibility range (the >= 0 rule is enforced above as an error).
+          # Upper bound from the data's shape: prices 5-500, max 4 lines x 3
+          # units -> ~6000; 10000 leaves room for price drift. Above it means
+          # e.g. duplicated lines or a broken price -- warn + stored rows.
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 10000
+              config:
+                severity: warn
+                store_failures: true
       - name: paid_amount
         description: >
           Net settled amount: SUM(amount) of payments with status 'completed';

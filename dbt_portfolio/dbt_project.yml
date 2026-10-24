@@ -37,3 +37,9 @@ models:
       +catalog_name: gold_iceberg
       +grants:
         select: ['portfolio_analyst']
+
+vars:
+  # Required by dbt_date (dependency of dbt_expectations): time zone for "now"
+  # in recency tests. UTC, because staging converts every timestamp to UTC
+  # TIMESTAMP_NTZ -- "now" and order_date must be compared in the same zone.
+  'dbt_date:time_zone': 'UTC'
