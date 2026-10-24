@@ -120,7 +120,7 @@ The text above is the decision of 2026-09-17, left unchanged. The actual state:
   PySpark reads the raw files from S3 and runs an idempotent `MERGE` into Iceberg (Glue
   Data Catalog), and Snowflake reads the Iceberg tables through a catalog-linked
   database (ADR-004). Idempotency confirmed in practice: the same window processed
-  twice with no change in the tables (`PROGRESS_LOG.md` §26, step 6.7).
+  twice with no change in the tables (README, question 1).
 - **Changed compared to the decision:**
   - Validation: a custom `validate.py` with quarantine and a hard gate instead of
     Great Expectations (GE deferred; a comparison of data-quality tools is planned

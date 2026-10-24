@@ -10,7 +10,7 @@ Up to Phase 5 both extraction scripts kept a watermark in state: local files
 `scripts/state/watermark_state.json` and `github_watermark_state.json`. Every run read the
 last value, fetched newer rows and overwrote the state with `MAX(updated_at)` from the
 fetched batch. The docstring of `extract.py` announced that in Phase 6 the state would move
-to Airflow Variables (PROGRESS_LOG §5).
+to Airflow Variables.
 
 Airflow introduces two requirements that a watermark in state does not meet well:
 
@@ -55,7 +55,7 @@ A backfill still requires rewinding the state by hand, and parallel runs would r
 single variable.
 
 **B: Watermark as `MAX(updated_at)` from the target table** (Iceberg/Snowflake, the variant
-described in PROGRESS_LOG §5). Self-healing (no separate state to lose), but backfilling a
+considered in phase 1). Self-healing (no separate state to lose), but backfilling a
 specific day is still impossible without overriding the logic, and extraction depends on
 the availability of the target layer.
 
@@ -91,6 +91,6 @@ completely".
 ## Related
 
 - ADR-002 (append-only raw + idempotent `MERGE`, on which this decision relies)
-- PROGRESS_LOG §5 (the original watermark), §10 (watermark limitations), §26
+- README, question 2 (the backfill test of this window strategy)
 - Author's study notes: CDC, MVCC, data interval, lookback, backfill (not part of the
   repository)

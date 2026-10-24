@@ -18,7 +18,7 @@ full picture), the script exits with code 1 if any row was quarantined. In
 Airflow that fails the validate_raw task, so the Spark MERGE tasks downstream
 do not run on a batch that failed validation.
 
-Known limitations (planned fix after the Snowflake trial, see PROGRESS_LOG §26):
+Known limitations (planned fix after the Snowflake trial, see README, Known limitations):
 - validates the MOST RECENT file per table, not the files of the current run
   (fix: extract passes the keys it wrote via XCom / --keys);
 - merge_*.py read ALL raw files, quarantined rows included, so the gate stops
