@@ -14,7 +14,9 @@ Snowflake (reads Iceberg natively, RBAC/masking/RLS) → dbt (done, Phase 5) →
 **Airflow (this phase, Phase 6)**. Full architecture and rationale:
 `project-summary-for-consultation.md`, `ADR-002`, `ADR-004`, `ADR-005`,
 `ADR-006`. Step-by-step build history with Q&A: `PROGRESS_LOG.md`. General
-theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.docx`.
+theory with examples (not specific to this project): the newest
+`DE_Interview_Cheatsheet-<n>.docx` (local only; every version ignored via
+`.gitignore` pattern `DE_Interview_Cheatsheet*.docx`; currently `-3`).
 
 ## State at the start of this phase
 
@@ -62,6 +64,35 @@ theory with examples (not specific to this project): `DE_Interview_Cheatsheet-2.
 - `portfolio_ecommerce_db` (catalog-linked) was recreated on 22.10 because its
   auto-refresh had been stopped since the 7.10 relocation (ADR-005, update
   2026-10-22). Policies on `customer` and analyst grants re-applied.
+- Reliability (step 6.5, 23.10): `retries`, `retry_exponential_backoff`,
+  `max_retry_delay` and per-stage `execution_timeout` come from
+  `config/<env>.yaml` (`retries`, `execution_timeout_minutes`);
+  `validate_raw` and `has_new_rows` have `retries=0` (deterministic failures).
+  `on_failure_callback` (after the LAST attempt) creates an Asana task:
+  `dags/alerting/asana.py` (env `ASANA_TOKEN`, `ASANA_PROJECT_ID`; never
+  raises). `dags/.airflowignore` keeps helper modules out of DAG parsing.
+- Do NOT change existing `task_id`s (incl. moving tasks into/out of a
+  TaskGroup, which prefixes the id): with `depends_on_past=True` the next run
+  waits forever for an instance that never existed — a silent stall, no
+  alert (PROGRESS_LOG §26, 6.5).
+- Source simulator (step 6.7, 23.10): DAG `dags/source_simulator.py` runs
+  `scripts/seed.py --mode daily` (dev schedule `30 23 * * *`, prod `null` —
+  `config/<env>.yaml` key `source_simulator`). It plays the source
+  application: appends today's activity (new customers, attribute changes ->
+  SCD2 versions, price changes, orders, status transitions), never modifies
+  history, idempotent per day. `seed.py` default `--mode init` is the original
+  historical seed (empty DB only). `faker` is in the Airflow image. Source
+  tables have a BEFORE UPDATE trigger setting `updated_at = now()`. The
+  simulator is not a task of `ecommerce_pipeline` on purpose.
+- Data tests on `fct_orders` (6.7, 24.10): `metaplane/dbt_expectations`
+  0.10.10 (+ `dbt_date`), var `dbt_date:time_zone: 'UTC'` in
+  `dbt_project.yml`; recency on `order_date` (warn), ISO alpha-2 regex on
+  `country_at_order` (error), value range on `gross_order_value` (warn).
+- `airflow dags test` is NOT a dry run and NOT isolated: it writes a manual run
+  into the shared metadata DB (an unpaused DAG's scheduler then executes the
+  same tasks too) and occupies its logical date (a manual run dated D blocks
+  the scheduled run for D). Don't suggest it for dates the scheduler will own;
+  prefer backfill/Clear for closed days.
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)
 
@@ -168,7 +199,7 @@ dbt_portfolio/
 │                                # expression_is_true (store_failures), freshness,
 │                                # unit_tests (int_customer_versions, fct_orders)
 ├── catalogs.yml                 # gold_iceberg -> portfolio_gold_ext_vol
-├── packages.yml / package-lock.yml   # dbt_utils, pinned
+├── packages.yml / package-lock.yml   # dbt_utils, dbt_expectations (+ dbt_date), pinned
 ├── dbt_project.yml
 └── profiles.yml.example         # real profiles.yml lives in ~/.dbt (never in repo)
 ```
