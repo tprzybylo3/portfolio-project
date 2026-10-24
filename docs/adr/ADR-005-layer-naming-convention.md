@@ -75,8 +75,8 @@ needed.
   policies (and per-table grants) have to be re-applied manually and tested.
 - ~~The S3 data directories kept the old names (`.../dim_customer/`). A consciously
   accepted cost.~~ Outdated since 2026-10-07, see "Update".
-- Older sections of `PROGRESS_LOG.md`, ADRs and general examples in the study notes keep
-  the old names as a record of the state at that time.
+- Older ADR sections and general examples in the study notes keep the old names as a
+  record of the state at that time.
 
 ## Update 2026-10-07: relocating the S3 paths
 
@@ -143,4 +143,4 @@ same metadata version as in Glue), **before** deleting the old files. When reloc
 
 - ADR-002 (the same Glue database and S3 bucket), ADR-004 (catalog integration and the IAM
   policy with the wildcard `table/portfolio_ecommerce/*`, which a rename does not break)
-- `PROGRESS_LOG.md`, sections 21 (rename) and 25 (path relocation)
+- `scripts/repairs/2026-10-07_relocate_table_paths/` (the path relocation)

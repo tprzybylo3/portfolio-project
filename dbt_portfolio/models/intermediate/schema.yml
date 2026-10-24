@@ -6,7 +6,7 @@ models:
       Customer SCD2 versions with effective windows for point-in-time joins
       [effective_from, effective_to). The first version of each customer is
       effective from 1900-01-01 so that orders dated before it (seed data
-      artefact, PROGRESS_LOG §23) still match a version. Contiguity of
+      artefact, scripts/repairs/2026-09-29_customer_valid_from/) still match a version. Contiguity of
       versions is guarded by the singular test
       assert_int_customer_versions_contiguous.
     data_tests:

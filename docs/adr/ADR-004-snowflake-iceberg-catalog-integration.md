@@ -94,4 +94,3 @@ access policy in one place — exactly what Lake Formation is designed for.
 
 - ADR-002 (Bronze ingestion strategy) — the same Glue Data Catalog and S3 bucket as the
   reference point for the Iceberg layer
-- `PROGRESS_LOG.md`, section 12 (Phase 4 — start)

@@ -7,7 +7,7 @@ Apache Iceberg tables (AWS Glue Data Catalog) → Snowflake reading Iceberg nati
 → orchestration in Airflow with retries, alerting and backfill.
 
 This README is built around the questions every production pipeline gets asked —
-**what if it runs twice, how do you backfill three months, how do you detect silent
+**what if it runs twice, how would you backfill three months, how do you detect silent
 data corruption** — plus the design "why" questions behind the architecture. The
 answers are backed by real runs, with numbers and screenshots.
 
@@ -17,7 +17,10 @@ answers are backed by real runs, with numbers and screenshots.
 ## Architecture
 
 ![Architecture overview: sources, Airflow, processing, AWS and Snowflake](docs/images/architecture.png)
-*Generated from code: `docs/diagrams/architecture.py` (`uv run python docs/diagrams/architecture.py`).*
+*Generated from code: `docs/diagrams/architecture.py` (`uv run python docs/diagrams/architecture.py`).
+Arrows: dark solid = data flow; purple = what Airflow runs (orchestration — no data passes
+through Airflow); grey dashed = metadata and control (catalog pointer, quarantine, dbt's SQL,
+alert, deployment, provisioning).*
 
 The detailed dependency map — every arrow labelled with what it carries:
 
@@ -139,19 +142,27 @@ decision have `retries=0` — their failures are deterministic.
 
 ![Incident task in Asana created by on_failure_callback](docs/images/asana_incident.png)
 
-## 2. How do you backfill three months?
+## 2. How would you backfill three months?
 
-The mechanics are in place and were tested on three days:
+The mechanics are in place and were tested on three days (2026-09-11..13); what has to
+change before a 90-day run is at the end of this section.
 
 ```bash
 docker compose exec airflow-scheduler airflow dags backfill ecommerce_pipeline -s 2026-09-11 -e 2026-09-13
 ```
 
-| Day | Rows from source | Validation | Iceberg tables | dbt |
+| Day | Rows from source | Validation | Iceberg after `MERGE` | dbt |
 |---|---|---|---|---|
-| 2026-09-11 | 18 | 0 quarantined | unchanged (data already loaded) | `PASS=69` |
-| 2026-09-12 | 21 | 0 | unchanged | `PASS=69` |
-| 2026-09-13 | 26 | 0 | unchanged | `PASS=69` |
+| 2026-09-11 | 18 | 0 quarantined | no change (already loaded) | `PASS=69` |
+| 2026-09-12 | 21 | 0 quarantined | no change (already loaded) | `PASS=69` |
+| 2026-09-13 | 26 | 0 quarantined | no change (already loaded) | `PASS=69` |
+
+Why the tables did not change: these three days had already been loaded by the initial
+load (phase 3). The backfill extracted them again, validated them, and `MERGE` found every
+row already present with the same values — reprocessing history changes nothing, which is
+the idempotency guarantee from question 1 applied to a backfill. New rows actually landing
+in the tables: [Real increment through the pipeline](#real-increment-through-the-pipeline)
+(57 source rows on 23.10, 6 new orders).
 
 Each run gets its own window `[D, D+1)` (for Postgres with a 10-minute lookback
 for late rows — ADR-006); days run in order thanks to `depends_on_past` and
@@ -321,7 +332,6 @@ snowflake/       scripts for Snowflake objects managed outside dbt
 docs/images/     screenshots from real runs + the generated architecture picture
 docs/diagrams/   architecture picture as code (the `diagrams` library)
 docs/adr/        architecture decision records (ADRs) + index
-PROGRESS_LOG.md  step-by-step build log with Q&A
 ```
 
 ## Architecture decisions
@@ -345,8 +355,8 @@ All ADRs live in [`docs/adr/`](docs/adr/) (index with status per decision).
 
 ## How it was built
 
-Step by step, with decisions recorded as they were made: `PROGRESS_LOG.md` is the
-full build log (what was done, what broke, which questions came up and what they
-teach), and the ADRs document decisions together with the rejected alternatives. The
+Step by step, with decisions recorded as they were made: the ADRs document decisions
+together with the rejected alternatives, and every claim in this README comes with
+evidence from real runs (screenshots, logs, row counts). The
 project was built with AI assistants following the workflow in ADR-003 — code and
 decisions reviewed, AI mistakes recorded in `ai/failure-log/`.

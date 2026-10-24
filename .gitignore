@@ -31,3 +31,6 @@ scripts/state/
 
 # dbt profiles -- real credentials live in ~/.dbt/profiles.yml, never in the repo
 profiles.yml
+
+# build log with Q&A: kept locally for the author and Claude Code, not published
+PROGRESS_LOG.md
