@@ -1908,15 +1908,39 @@ zmiana `.gitignore`: wzorzec `DE_Interview_Cheatsheet*.docx` zamiast samego
   „teraz”; oba muszą być w tej samej strefie, a staging trzyma wszystko w UTC.
   Strefę biznesu (np. `Europe/Warsaw`) ustawia się, gdy „dzień” w raportach ma
   się liczyć według czasu klienta.
+- **Czy testy dbt są w ogóle uruchamiane w Snowflake'u?** (po zielonym `dbt
+  test`) Tak, w całości. dbt jest kompilatorem i dyrygentem SQL-a: zamienia
+  test z YAML-a na `SELECT` zwracający ZŁE wiersze, Snowflake wykonuje go na
+  warehouse'ie (kredyty — dlatego po 27.10 testy dbt staną), dbt liczy tylko
+  zwrócone wiersze (0 = `PASS`, n = `FAIL n`/`WARN n`). Skompilowany SQL każdego
+  testu leży w `dbt_portfolio/target/compiled/`. Testy z `store_failures` najpierw
+  zapisują złe wiersze w schemacie `dbt_dev_dbt_test__audit` (`create or replace
+  transient table …`), potem liczą `count(*)` z tej tabeli; unit test tworzy z
+  fixture'ów pustą tabelę tymczasową (`where false limit 0`), żeby poznać typy
+  kolumn. W firmie identycznie — testy danych działają tam, gdzie dane leżą; w
+  odróżnieniu od `validate.py`, który czyta surowe pliki z S3 w Pythonie (bramka
+  przed hurtownią).
+- **Gdzie w Snowflake'u widać, że zapytanie wysłał dbt?** (przy przeglądaniu
+  Query History) Trzy ślady: (1) komentarz doklejany przez dbt na końcu każdego
+  SQL-a: `/* {"app": "dbt", "dbt_version": …, "target_name": "dev", "node_id":
+  "test.dbt_portfolio.…"} */` — `node_id` wskazuje konkretny test/model; (2)
+  CLIENT DRIVER `PythonConnector` (dbt-snowflake) vs `Go` (Snowsight, czyli
+  ręczne zapytania z worksheetu); (3) wspólne SESSION ID zapytań jednego
+  uruchomienia. U nas USER to Twój użytkownik (dbt loguje się Twoim kluczem); w
+  firmie dbt ma użytkownika serwisowego (np. `SVC_DBT`) i `query_tag` w profilu
+  (np. `dbt_prod`), dzięki czemu w Query History i w rozliczeniu kredytów od razu
+  widać, co zużył dbt, a co ludzie (`query_tag` — faza 7). Wyniki zapytań
+  `COUNT(*)` per rola nie są widoczne w historii — do dowodów uruchomić je
+  pojedynczo w worksheecie.
 
-**Następny krok:** commit + PR z `feat/dbt-expectations` (testy, zmienna `dbt_date`,
-komentarz w `seed.py`, wpisy 6.7 cz. 2 i 3a). Potem do 26.10: zrzuty dowodów
-(liczniki `COUNT(*)` per rola pojedynczo), README na pytaniach kontrolnych z
-planu, `CLAUDE.md` (symulator, `dbt_expectations`, nazwa cheat sheetu), cheat
-sheet (pułapki `dags test`, data logiczna runu ręcznego, niepełne okno,
-`FAIL`/`WARN`/`ERROR`). Po 27.10: `merge_*` tylko na plikach bieżącego runu,
-auto-zamykanie i deduplikacja zadań w Asanie, `dagrun_timeout` z alertem DAG-a;
-faza 7 (CI, Ruff w pre-commit, `dbt deps` w CI, jeden obraz Airflow, profil
+**Następny krok:** commit z testami wypchnięty (24.10); drugi commit w tym samym
+PR: te pytania, `CLAUDE.md` (symulator, `dbt_expectations`, pułapki `dags
+test`, nazwa cheat sheetu) i nowe sekcje cheat sheetu 31.26–31.29 (lokalnie,
+poza repo). Po merge'u, do 26.10: zrzuty dowodów (liczniki `COUNT(*)` per rola
+pojedynczo), README na pytaniach kontrolnych z planu. Po 27.10: `merge_*` tylko
+na plikach bieżącego runu, auto-zamykanie i deduplikacja zadań w Asanie,
+`dagrun_timeout` z alertem DAG-a; faza 7 (CI, Ruff w pre-commit, `dbt deps` w
+CI, `query_tag` i użytkownik serwisowy dla dbt, jeden obraz Airflow, profil
 `dev` w compose).
 
 ---
