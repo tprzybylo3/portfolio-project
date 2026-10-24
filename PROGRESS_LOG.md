@@ -2040,10 +2040,41 @@ documentation commit, deleting the recreated branch locally and on GitHub → PR
   ("diagram as code" with official vendor icons: PostgreSQL, GitHub, Airflow, Spark, dbt,
   S3, Glue, Athena, Snowflake) generates `docs/images/architecture.png`, shown at the top of
   the README's Architecture section; the Mermaid map stays below as the detailed view. Iceberg
-  is drawn as S3 (its tables are files in S3), Asana as a plain node (no icon in the
-  library). Regenerated locally (`brew install graphviz`, `uv add --dev diagrams`), so the
-  picture always comes from the script in the repo. In a company the same: diagrams as code
+  is drawn as S3 (its tables are files in S3); Asana uses the author's logo file
+  (`docs/diagrams/icons/asana_logo.webp`, a PNG copy because Graphviz cannot read WebP).
+  Regenerated locally (`brew install graphviz`, `uv add --dev diagrams`), so the picture
+  always comes from the script in the repo. In a company the same: diagrams as code
   (diagrams, Structurizr/C4, Mermaid) next to the code, rendered in CI or by hand.
+  Final layout after several review rounds: layers left to right — Sources → Ingestion →
+  AWS (Raw/bronze, Lakehouse/silver) → Snowflake (source tables → staging + intermediate →
+  marts) → Gold (S3); Orchestration (Airflow + dbt) as a bottom row, Alerting (Asana) below
+  it, CI/CD and IaC (Terraform, GitHub Actions) on the left — the picture shows the finished
+  project, README "Known limitations" says phases 7–8 are next. Graphviz lessons: every edge
+  `label` gets its own invisible column (it pushed the Snowflake icons apart unevenly), so the
+  final picture has no arrow labels; `constraint=false` draws an arrow without letting it
+  move the layout; invisible edges and `group` position and align nodes; `splines=line`
+  keeps every arrow one straight segment.
+- **Why is dbt drawn outside Snowflake, if the models live there?** dbt Core is a program in
+  the Airflow container: it generates SQL (`CREATE VIEW`, `CREATE TABLE AS SELECT`) and sends
+  it to Snowflake, which builds and stores the objects. Staging = thin 1:1 views over the
+  source tables (renames, types, UTC); intermediate = reusable logic not exposed to analysts
+  (`int_customer_versions`); marts = tables answering business questions, with grants and
+  policies (`fct_orders`, so far the only mart).
+- **Spark points to both Glue and S3 — why?** On `MERGE` Spark writes everything to S3: data
+  files (Parquet) and Iceberg metadata files (`metadata.json`, manifests). The commit is an
+  atomic swap of one pointer in Glue ("the current version is this `metadata.json`"). Glue
+  holds only that pointer; readers ask Glue where the latest version is and read the data
+  from S3.
+- **Shouldn't Athena read gold too?** Athena finds Iceberg tables through the Glue catalog.
+  Silver tables are written by Spark and registered in Glue, so Athena sees them. The marts
+  are Snowflake-managed Iceberg (catalog = Snowflake): their files are in S3, but Glue does
+  not know them. Reading gold from Athena would need the Snowflake catalog exposed (Snowflake
+  Open Catalog / Horizon via Iceberg REST) or regular registration in Glue — a deliberate
+  trade-off, not implemented.
+- **Is anything missing from the picture?** S3 quarantine (where `validate.py` puts rejected
+  rows) — added. Observability (phase 9) is added once its tool is chosen. Left out on
+  purpose: IAM roles per consumer (security detail, ADR-004), Docker as an icon (shown in the
+  labels), uv and Ruff (developer tooling, not architecture).
 - **Does the README go into `docs/` too?** No: the main `README.md` stays in the root,
   because GitHub shows it on the repo page. `docs/adr/README.md` is a separate index
   that GitHub displays when you open the folder — two files with the same name in
