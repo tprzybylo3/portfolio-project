@@ -12,8 +12,9 @@ validation (`validate.py` with quarantine; Great Expectations deliberately
 deferred) → PySpark + Apache Iceberg (Glue Data Catalog) →
 Snowflake (reads Iceberg natively, RBAC/masking/RLS) → dbt (done, Phase 5) →
 **Airflow (this phase, Phase 6)**. Full architecture and rationale:
-`project-summary-for-consultation.md`, `ADR-002`, `ADR-004`, `ADR-005`,
-`ADR-006`. Step-by-step build history with Q&A: `PROGRESS_LOG.md`. General
+`README.md` (architecture, evidence, known limitations), ADR-001 … ADR-006 in `docs/adr/`
+(the original planning summary lives outside the repo and is outdated — don't
+look for it). Step-by-step build history with Q&A: `PROGRESS_LOG.md`. General
 theory with examples (not specific to this project): the newest
 `DE_Interview_Cheatsheet-<n>.docx` (local only; every version ignored via
 `.gitignore` pattern `DE_Interview_Cheatsheet*.docx`; currently `-3`).

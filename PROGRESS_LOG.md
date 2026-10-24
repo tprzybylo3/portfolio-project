@@ -1,1948 +1,2065 @@
-# Portfolio Project — Dziennik budowy
+# Portfolio Project — Build log
 
-Chronologiczny zapis: co zrobiliśmy, w jakiej kolejności, i jakie pytania/
-odpowiedzi padły po drodze. Teoria ogólna z przykładami żyje w
-`DE_Interview_Cheatsheet.docx` — tu jest historia konkretnie TEGO projektu.
+A chronological record: what we did, in what order, and which questions/answers came up
+along the way. General theory with examples lives in `DE_Interview_Cheatsheet.docx` — this
+is the history of THIS particular project.
 
 ---
 
-## 1. Środowisko lokalne (macOS)
+## 1. Local environment (macOS)
 
-**Zrobione:** Homebrew → Git + konfiguracja SSH do GitHuba → `uv` → Docker Desktop.
+**Done:** Homebrew → Git + SSH configuration for GitHub → `uv` → Docker Desktop.
 
-**Pytania/odpowiedzi:**
-- *Czym jest Homebrew, jakie są alternatywy?* — menedżer pakietów macOS (jak `apt`); alternatywy: MacPorts, Nix, ręczna instalacja, pyenv/nvm (te ostatnie tylko per-język, nie zastępują Homebrew).
-- *Jak skonfigurować SSH do GitHuba?* — `ssh-keygen -t ed25519`, dodanie do ssh-agenta/Keychain, wklejenie klucza publicznego w GitHub → Settings → SSH keys, test przez `ssh -T git@github.com`.
-- *Dlaczego `ed25519` w nazwie klucza?* — nazwa algorytmu (krzywa eliptyczna Curve25519, liczba 2²⁵⁵−19 to STAŁA matematyczna, publiczna dla wszystkich — unikalny jest dopiero losowy klucz prywatny wygenerowany NA tej krzywej).
-- *Jak mieć dwa różne klucze SSH (np. do routera i GitHuba)?* — `-f ~/.ssh/id_ed25519_nazwa` przy generowaniu + osobne bloki `Host` w `~/.ssh/config`.
-- *utknięcie w `vim`* — `Esc` + `:q!` (wyjście bez zapisu); polecono `nano` do prostych edycji zamiast `vim`.
-- *Dlaczego `uv`, nie `requirements.txt`/`pip`?* — `uv` = szybszy następca `pip`, wbudowany lock file (`uv.lock`), zarządza też wersją Pythona. `pip`/`requirements.txt` bywa nadal używane tam, gdzie dokumentacja/ekosystem (np. Airflow) jeszcze nie nadążyła — `uv pip install` jest w pełni kompatybilne wstecz.
-- *Dlaczego Python 3.12, nie najnowszy (3.14/3.15)?* — kompatybilność z PySpark (opóźnienie we wspieraniu nowych wersji), dojrzałość wheels dla pakietów natywnych (psycopg2, pyarrow), "boring technology" jako sygnał na rozmowie.
+**Questions/answers:**
+- *What is Homebrew, what are the alternatives?* — a package manager for macOS (like `apt`); alternatives: MacPorts, Nix, manual installation, pyenv/nvm (the latter only per language, they don't replace Homebrew).
+- *How do I configure SSH for GitHub?* — `ssh-keygen -t ed25519`, add it to ssh-agent/Keychain, paste the public key into GitHub → Settings → SSH keys, test with `ssh -T git@github.com`.
+- *Why `ed25519` in the key name?* — the name of the algorithm (the elliptic curve Curve25519; the number 2²⁵⁵−19 is a mathematical CONSTANT, public for everyone — only the random private key generated ON that curve is unique).
+- *How do I have two different SSH keys (e.g. for a router and for GitHub)?* — `-f ~/.ssh/id_ed25519_name` when generating + separate `Host` blocks in `~/.ssh/config`.
+- *Stuck in `vim`* — `Esc` + `:q!` (exit without saving); recommended `nano` for simple edits instead of `vim`.
+- *Why `uv`, not `requirements.txt`/`pip`?* — `uv` = a faster successor of `pip`, with a built-in lock file (`uv.lock`), and it also manages the Python version. `pip`/`requirements.txt` is still used where documentation/the ecosystem (e.g. Airflow) hasn't caught up yet — `uv pip install` is fully backward compatible.
+- *Why Python 3.12, not the newest (3.14/3.15)?* — compatibility with PySpark (it lags in supporting new versions), maturity of wheels for native packages (psycopg2, pyarrow), "boring technology" as a signal in an interview.
 
-## 2. Struktura repo i pierwsze pliki
+## 2. Repo structure and first files
 
-**Zrobione:** `docker-compose.yml` (postgres-source, postgres-airflow, airflow-init/webserver/scheduler), `sql/ddl.sql` (6 tabel), `airflow-docker/Dockerfile`+`requirements.txt`.
+**Done:** `docker-compose.yml` (postgres-source, postgres-airflow, airflow-init/webserver/scheduler), `sql/ddl.sql` (6 tables), `airflow-docker/Dockerfile`+`requirements.txt`.
 
-**Pytania/odpowiedzi:**
-- *Co to `docker-compose.yml`, czy to uniwersalny plik?* — NIE, szyty pod konkretny projekt; Docker pakuje CAŁE środowisko (system, dowolny język), nie tylko zależności Pythona.
-- *Błąd YAML: `depends_on` z myślnikiem + zagnieżdżonym `condition`* — dwie różne składnie (`depends_on: [- nazwa]` vs `depends_on: {nazwa: {condition: ...}}`) nie mieszają się; poprawka na formę mapowania.
-- *Błąd: komenda `airflow-init` rozjechana na osobne linie bash* — YAML folded scalar (`>`) łączy linie spacją TYLKO przy identycznym wcięciu; głębsze wcięcie zachowuje prawdziwe newline'y. Naprawa: jedna płaska linia.
-- *`airflow-init` failuje przy DRUGIM uruchomieniu* — `airflow users create` nie jest idempotentne (user już istnieje); naprawa: `|| true` żeby połknąć ten konkretny, oczekiwany błąd.
-- *Dlaczego `SERIAL` zamiast `INT` na PK?* — surrogate key: `INTEGER` + `SEQUENCE` + `DEFAULT nextval(...)` w jednym, auto-increment bez ręcznego zarządzania unikalnością.
-- *Co robi `CREATE INDEX` na `updated_at`?* — B-tree przyspieszający `WHERE updated_at > watermark`, koszt: spowalnia zapisy.
-- *Co robi `CREATE TRIGGER` + `CREATE OR REPLACE FUNCTION ... RETURNS TRIGGER`?* — dwa osobne obiekty: funkcja (logika) + trigger (podpięcie do zdarzenia `BEFORE UPDATE`). `NEW`/`OLD` to zmienne wstrzykiwane automatycznie przez Postgresa przy wywołaniu jako trigger.
-- *Dlaczego `WHERE updated_at > watermark` łapie też NOWE wiersze, nie tylko update'y?* — `DEFAULT now()` działa też przy INSERT, nie tylko trigger przy UPDATE.
-- *Czy UPDATE zachowuje starą wersję wiersza?* — NIE (SCD Type 1, nadpisanie w miejscu); historia (SCD2) to świadomie osobna warstwa dalej w pipeline (dbt snapshot/MERGE na Iceberg), nie coś, co OLTP ma robić samo.
-- *Czy trzeba ręcznie odpalać VACUUM?* — nie, `autovacuum` domyślnie włączony, sprząta MVCC dead tuples w tle automatycznie.
+**Questions/answers:**
+- *What is `docker-compose.yml`, is it a universal file?* — NO, it is tailored to a specific project; Docker packages the WHOLE environment (system, any language), not just Python dependencies.
+- *YAML error: `depends_on` with a dash + a nested `condition`* — the two syntaxes (`depends_on: [- name]` vs `depends_on: {name: {condition: ...}}`) don't mix; fixed to the mapping form.
+- *Error: the `airflow-init` command split into separate bash lines* — a YAML folded scalar (`>`) joins lines with a space ONLY at identical indentation; deeper indentation keeps real newlines. Fix: one flat line.
+- *`airflow-init` fails on the SECOND start* — `airflow users create` is not idempotent (the user already exists); fix: `|| true` to swallow that specific, expected error.
+- *Why `SERIAL` instead of `INT` for the PK?* — a surrogate key: `INTEGER` + `SEQUENCE` + `DEFAULT nextval(...)` in one, auto-increment without managing uniqueness by hand.
+- *What does `CREATE INDEX` on `updated_at` do?* — a B-tree speeding up `WHERE updated_at > watermark`; the cost: it slows down writes.
+- *What do `CREATE TRIGGER` + `CREATE OR REPLACE FUNCTION ... RETURNS TRIGGER` do?* — two separate objects: a function (the logic) + a trigger (attaching it to the `BEFORE UPDATE` event). `NEW`/`OLD` are variables injected automatically by Postgres when it is called as a trigger.
+- *Why does `WHERE updated_at > watermark` also catch NEW rows, not just updates?* — `DEFAULT now()` also applies on INSERT, not only the trigger on UPDATE.
+- *Does an UPDATE keep the old version of the row?* — NO (SCD Type 1, overwritten in place); history (SCD2) is deliberately a separate layer further down the pipeline (dbt snapshot/MERGE on Iceberg), not something the OLTP should do itself.
+- *Do I need to run VACUUM manually?* — no, `autovacuum` is on by default and cleans up MVCC dead tuples in the background automatically.
 
-## 3. AWS setup od zera
+## 3. AWS setup from scratch
 
-**Zrobione:** konto AWS (root) → budget alert → IAM user (`portfolio-pipeline`, bez dostępu do konsoli) → policy `AmazonS3FullAccess` → access key (use case "Local code") → `awscli` przez Homebrew → `aws configure` (region `eu-central-1`) → bucket S3 (`tp-portfolio-ecommerce-raw`).
+**Done:** AWS account (root) → budget alert → IAM user (`portfolio-pipeline`, no console access) → policy `AmazonS3FullAccess` → access key (use case "Local code") → `awscli` via Homebrew → `aws configure` (region `eu-central-1`) → S3 bucket (`tp-portfolio-ecommerce-raw`).
 
-**Pytania/odpowiedzi:**
-- *Dlaczego "access key", nie "API key"/SSH?* — nazewnictwo specyficzne dla AWS; SSH to inny protokół (logowanie do maszyny), nieużywany do wywołań API.
-- *Czy do AWS loguje się przez Gmail?* — tak, root user = zwykły mail + hasło; IAM user loguje się inaczej (ID konta + username), ale u nas świadomie bez dostępu do konsoli w ogóle.
-- *Czy user1/portfolio-pipeline to jak nowy pracownik w korporacji?* — częściowo; w dojrzałych firmach ludzie logują się przez SSO/IAM Identity Center (federacja), pojedynczy IAM user z access key zostaje jako wzorzec dla **service accountów** (automatyzacji), nie ludzi.
-- *Trafiłem przypadkiem na "IAM Identity Center" (multi-region, KMS charges)* — to inna usługa niż zwykłe IAM; Cancel, szukać czystego "IAM" bez "Identity Center".
-- *`uv install awscli`?* — NIE; `awscli` to systemowe narzędzie (Homebrew), nie biblioteka Pythona importowana przez kod — `uv` zarządza tylko zależnościami projektu.
-- *Dlaczego bucket w `us-east-1` a `aws configure` ma `eu-central-1`?* — okazało się że to był tylko domyślny widok UI przed przeładowaniem; `aws s3api get-bucket-location` potwierdził zgodność `eu-central-1`.
+**Questions/answers:**
+- *Why an "access key", not an "API key"/SSH?* — AWS-specific naming; SSH is a different protocol (logging into a machine), not used for API calls.
+- *Do you log into AWS with Gmail?* — yes, the root user = a normal email + password; an IAM user logs in differently (account ID + username), but here deliberately without console access at all.
+- *Is user1/portfolio-pipeline like a new employee in a corporation?* — partly; in mature companies people log in via SSO/IAM Identity Center (federation), and a single IAM user with an access key remains the pattern for **service accounts** (automation), not people.
+- *I accidentally landed in "IAM Identity Center" (multi-region, KMS charges)* — that is a different service than plain IAM; Cancel, look for plain "IAM" without "Identity Center".
+- *`uv install awscli`?* — NO; `awscli` is a system tool (Homebrew), not a Python library imported by the code — `uv` only manages the project's dependencies.
+- *Why is the bucket in `us-east-1` while `aws configure` has `eu-central-1`?* — it turned out to be just the UI's default view before a reload; `aws s3api get-bucket-location` confirmed it is `eu-central-1`.
 
-## 4. Seed danych (`seed.py`)
+## 4. Data seed (`seed.py`)
 
-**Zrobione:** Faker (`Faker.seed(42)`) → 50 klientów, 30 produktów, 200 zamówień + item/payment/status history, przetestowane end-to-end (osobny Postgres w sandboxie), potwierdzone identyczne liczby u Ciebie (56/47/14/40/43 status breakdown).
+**Done:** Faker (`Faker.seed(42)`) → 50 customers, 30 products, 200 orders + items/payments/status history, tested end to end (a separate Postgres in a sandbox), identical counts confirmed on your side (56/47/14/40/43 status breakdown).
 
-**Pytania/odpowiedzi:**
-- *Co to `psycopg2`?* — driver/adapter Pythona do Postgresa, `psycopg2-binary` = prekompilowane binarki.
-- *Dlaczego `uv run python skrypt.py`, nie `python skrypt.py`?* — `.venv` to izolowane środowisko z faktycznie zainstalowanymi zależnościami; gołe `python` użyje systemowego Pythona bez tych pakietów.
-- *Co to lock file, ogólnie?* — plik generowany automatycznie, dokładne wersje CAŁEGO drzewa zależności; ten sam koncept co `package-lock.json` (npm), `Gemfile.lock` (Ruby), `Cargo.lock` (Rust).
-- *Skoro mam `uv.lock`, to `pyproject.toml` jest zbędny?* — NIE; `pyproject.toml` = intencja (edytowana przez `uv add`/`uv remove`), `uv.lock` = dokładny, automatycznie wyliczony wynik tej intencji. Oba commitowane razem.
+**Questions/answers:**
+- *What is `psycopg2`?* — a Python driver/adapter for Postgres; `psycopg2-binary` = precompiled binaries.
+- *Why `uv run python script.py`, not `python script.py`?* — `.venv` is an isolated environment with the dependencies actually installed; a bare `python` uses the system Python without those packages.
+- *What is a lock file, in general?* — an automatically generated file with the exact versions of the WHOLE dependency tree; the same concept as `package-lock.json` (npm), `Gemfile.lock` (Ruby), `Cargo.lock` (Rust).
+- *If I have `uv.lock`, is `pyproject.toml` redundant?* — NO; `pyproject.toml` = the intent (edited with `uv add`/`uv remove`), `uv.lock` = the exact, automatically resolved result of that intent. Both are committed together.
 
 ## 5. Incremental extract: Postgres → S3 (`extract.py`)
 
-**Zrobione:** watermark per tabela w lokalnym pliku JSON, `MAX(watermark)` z faktycznie pobranych wierszy jako nowy punkt odcięcia, append-only partycjonowanie w S3 (`ingestion_date=.../run_id=...`). Przetestowane: pierwszy przebieg (pełny), drugi przebieg (zero nowych), UPDATE złapany poprawnie (dokładnie 1 wiersz).
+**Done:** a watermark per table in a local JSON file, `MAX(watermark)` from the rows actually fetched as the new cut-off point, append-only partitioning in S3 (`ingestion_date=.../run_id=...`). Tested: the first run (full), the second run (zero new rows), an UPDATE caught correctly (exactly 1 row).
 
-**Pytania/odpowiedzi:**
-- *Co robi `load_watermark_state()`, czemu `return {}` bez `else`?* — "early return": `return` w pierwszej gałęzi kończy funkcję, więc kod niżej wykonuje się TYLKO gdy ta gałąź nie zaszła — funkcjonalnie identyczne do jawnego `else`.
-- *Co robi `try/finally`?* — gwarantuje wykonanie sprzątania (`connection.close()`) niezależnie czy w bloku `try` wystąpił błąd, czy nie — bez tego błąd w połowie pętli zostawiłby otwarte połączenie.
-- *Dlaczego watermark łapie nowe ORAZ zmienione rekordy, nie tylko "nowe"?* — bo pyta "co jest nowsze niż ostatni checkpoint", nie "czy było update'owane" — insert i update oba ustawiają `updated_at`.
-- *Jak wygląda to na produkcji (nie lokalny plik)?* — dwa wzorce: (A) zewnętrzny store stanu (Airflow Variable/tabela kontrolna), (B) zapytanie `MAX(watermark)` bezpośrednio do tabeli DOCELOWEJ (Snowflake/Iceberg) — samo-naprawiające się, brak osobnego stanu do zgubienia. Lokalny JSON to świadomy placeholder do czasu istnienia tabeli docelowej.
+**Questions/answers:**
+- *What does `load_watermark_state()` do, why `return {}` without an `else`?* — an "early return": `return` in the first branch ends the function, so the code below runs ONLY when that branch didn't happen — functionally identical to an explicit `else`.
+- *What does `try/finally` do?* — it guarantees the cleanup (`connection.close()`) runs regardless of whether an error happened in the `try` block — without it, an error halfway through the loop would leave the connection open.
+- *Why does the watermark catch new AND changed records, not just "new" ones?* — because it asks "what is newer than the last checkpoint", not "was it updated" — both an insert and an update set `updated_at`.
+- *What does this look like in production (not a local file)?* — two patterns: (A) an external state store (an Airflow Variable/a control table), (B) querying `MAX(watermark)` directly from the TARGET table (Snowflake/Iceberg) — self-healing, no separate state to lose. The local JSON is a deliberate placeholder until the target table exists.
 
-## 6. Repo na GitHubie
+## 6. Repo on GitHub
 
-**Zrobione:** `.gitignore` (świeżo dopisany, bo `uv init` go nie stworzyło — folder już był repo gita), pierwszy commit, nowe puste repo na GitHubie (Public, bez README/gitignore z ich strony), `git remote add origin` (SSH), `git push -u origin main`.
+**Done:** `.gitignore` (newly added, because `uv init` didn't create it — the folder was already a git repo), the first commit, a new empty repo on GitHub (Public, without README/gitignore on their side), `git remote add origin` (SSH), `git push -u origin main`.
 
-**Pytania/odpowiedzi:**
-- *Dlaczego `.gitignore` nie istniał mimo wcześniejszego `uv init`?* — `uv init` tworzy `.gitignore` tylko gdy SAMO zakłada nowe repo gita; jeśli folder już był repo (`.git` istniał), pomija ten krok.
-- *Co robią `git remote add origin`/`git branch -M main`/`git push -u origin main`?* — kolejno: zarejestrowanie adresu zdalnego repo pod aliasem `origin`; wymuszenie nazwy gałęzi `main`; faktyczny transfer + zapamiętanie powiązania lokalna↔zdalna gałąź (`-u`).
-- *Jak działa port/IP (SSH na porcie 22)?* — IP = adres budynku, port = numer pokoju w środku; port 22 to konwencja IANA (rejestr), nie fizyczna właściwość — serwer SSH może nasłuchiwać na dowolnym innym porcie.
-- *Czym różni się SSH (do `git`) od PAT+HTTPS (do REST API)?* — SSH = protokół transportowy używany przez `git` do push/pull; PAT = poświadczenie wysyłane WEWNĄTRZ zwykłych zapytań HTTPS do REST API — dwie niezależne warstwy (transport vs. tożsamość), nie warianty tego samego.
+**Questions/answers:**
+- *Why didn't `.gitignore` exist despite the earlier `uv init`?* — `uv init` creates `.gitignore` only when it creates a new git repo ITSELF; if the folder was already a repo (`.git` existed), it skips that step.
+- *What do `git remote add origin`/`git branch -M main`/`git push -u origin main` do?* — in order: register the remote repo's address under the alias `origin`; force the branch name `main`; the actual transfer + remembering the link between the local and remote branch (`-u`).
+- *How do port/IP work (SSH on port 22)?* — the IP = the building's address, the port = the room number inside; port 22 is an IANA convention (a registry), not a physical property — an SSH server can listen on any other port.
+- *How does SSH (for `git`) differ from PAT+HTTPS (for the REST API)?* — SSH = the transport protocol used by `git` for push/pull; a PAT = a credential sent INSIDE ordinary HTTPS requests to the REST API — two independent layers (transport vs identity), not variants of the same thing.
 
 ## 7. GitHub API extract (`github_extract.py`)
 
-**Zrobione:** Fine-grained PAT ("Public Repositories, read-only"), `.env` + `python-dotenv`, 4 encje (`repositories`/`issues`/`pull_requests`/`contributors`) z `apache/airflow`, trzy różne wzorce incremental per endpoint (GitHub API narzuca różne ograniczenia), paginacja przez `Link` header, multithreading przez `ThreadPoolExecutor`+`as_completed`.
+**Done:** a fine-grained PAT ("Public Repositories, read-only"), `.env` + `python-dotenv`, 4 entities (`repositories`/`issues`/`pull_requests`/`contributors`) from `apache/airflow`, three different incremental patterns per endpoint (the GitHub API imposes different constraints), pagination via the `Link` header, multithreading via `ThreadPoolExecutor`+`as_completed`.
 
-**Znalezione i naprawione bugi (realne, empiryczne):**
-- GitHub API: `since=1970-01-01` (epoka) zwraca CICHO pustą listę (status 200, `[]`) — niedokumentowany edge case; naprawa: pomiń `since` całkowicie przy pierwszym przebiegu zamiast epoki.
-- Pierwszy przebieg `pull_requests` wisiał minutami — sekwencyjna paginacja przez CAŁĄ historię PR-ów bardzo aktywnego repo; naprawa: ograniczenie pierwszego przebiegu do 90 dni wstecz + twardy limit 20 stron jako zabezpieczenie + logowanie postępu strona po stronie.
+**Bugs found and fixed (real, empirical):**
+- GitHub API: `since=1970-01-01` (the epoch) SILENTLY returns an empty list (status 200, `[]`) — an undocumented edge case; fix: skip `since` entirely on the first run instead of using the epoch.
+- The first `pull_requests` run hung for minutes — sequential pagination through the WHOLE PR history of a very active repo; fix: limit the first run to 90 days back + a hard limit of 20 pages as a safeguard + page-by-page progress logging.
 
-**Pytania/odpowiedzi:**
-- *Co to PAT, jakie są alternatywy?* — token identyfikujący usera wobec API (zamiast login+hasło, wyłączone przez GitHub w 2021); alternatywy: OAuth App (loguje wielu userów), GitHub App (integracja na poziomie organizacji), classic PAT (szersze zakresy, mniej precyzyjny).
-- *Jakie dane realnie ciągniemy z `apache/airflow`?* — publiczne metadane repo/issues/PR-ów/kontrybutorów, dokładnie to co widać na stronie GitHuba, tylko jako JSON zamiast HTML.
-- *Co robi `as_completed`?* — NIE dodaje współbieżności (to robi `submit()`); zmienia tylko KOLEJNOŚĆ odbioru wyników na "w miarę kończenia" zamiast "w kolejności zlecenia".
-- *`multiprocessing.pool.ThreadPool` vs `concurrent.futures.ThreadPoolExecutor`?* — dwa niezależne dialekty tego samego pomysłu (starszy vs nowszy), różnią się tylko stylem API (`.map()` vs `.submit()`+`as_completed`), nie mają związku z tym, czy kod dotyczy Sparka czy nie.
-- *Kiedy wątki faktycznie pomagają?* — I/O-bound (czekanie na sieć/dysk/klaster) — GIL zwolniony podczas czekania. CPU-bound (liczenie w pamięci) — wątki NIE pomagają przez GIL, trzeba `ProcessPoolExecutor`.
-- *Czym są wątki, intuicyjnie?* — proces = budynek (odizolowana pamięć), wątek = pracownik wewnątrz (dzieli pamięć z innymi wątkami); GIL = "jedna ksero-maszyna na budynek".
-- *Kod ze Sparkiem z `ThreadPool` — czy to ma sens, gdzie tu wchodzi Spark?* — TAK, to legit i udokumentowana technika (Spark "Scheduling Within an Application"); trzy warstwy: (A) Spark sam rozdziela JEDNO zapytanie na executory (JVM, niezależne od Pythona), (B) wątki na driverze decydują ile NIEZALEŻNYCH zapytań do Sparka lecą naraz (czysty Python, ten sam GIL/I-O co przy API), (C) Fair Scheduler Sparka (opcjonalny, trzeba włączyć `spark.scheduler.mode=FAIR`) sprawiedliwie dzieli zasoby klastra między równoległe joby z wątków.
-- *Czy Fair Scheduler trzeba zawsze dodawać?* — NIE, domyślny FIFO w pełni poprawny funkcjonalnie; FAIR to opcjonalna optymalizacja przy wielu jobach różnej wielkości/ograniczonych zasobach klastra.
-- *Znaleziony bug w przykładowym kodzie usera (spoza tego projektu)* — gałąź `else` (`multithread_processing=False`) miała `.append()` POZA pętlą (złe wcięcie) — działałoby tylko dla ostatniej iteracji; plus brakująca inicjalizacja `schema_output=[]` w tej gałęzi.
+**Questions/answers:**
+- *What is a PAT, what are the alternatives?* — a token identifying the user to the API (instead of login+password, disabled by GitHub in 2021); alternatives: an OAuth App (logs in many users), a GitHub App (organisation-level integration), a classic PAT (broader scopes, less precise).
+- *What data are we actually pulling from `apache/airflow`?* — public metadata of the repo/issues/PRs/contributors, exactly what you see on the GitHub page, just as JSON instead of HTML.
+- *What does `as_completed` do?* — it does NOT add concurrency (that's what `submit()` does); it only changes the ORDER in which results are received to "as they finish" instead of "in submission order".
+- *`multiprocessing.pool.ThreadPool` vs `concurrent.futures.ThreadPoolExecutor`?* — two independent dialects of the same idea (older vs newer), they differ only in API style (`.map()` vs `.submit()`+`as_completed`), and have nothing to do with whether the code is about Spark or not.
+- *When do threads actually help?* — I/O-bound (waiting for the network/disk/cluster) — the GIL is released while waiting. CPU-bound (in-memory computation) — threads do NOT help because of the GIL; you need `ProcessPoolExecutor`.
+- *What are threads, intuitively?* — a process = a building (isolated memory), a thread = an employee inside (shares memory with other threads); the GIL = "one photocopier per building".
+- *Code with Spark and a `ThreadPool` — does it make sense, where does Spark come in?* — YES, it is a legit and documented technique (Spark "Scheduling Within an Application"); three layers: (A) Spark itself distributes ONE query across executors (JVM, independent of Python), (B) threads on the driver decide how many INDEPENDENT queries go to Spark at once (pure Python, the same GIL/I-O as with the API), (C) Spark's Fair Scheduler (optional, has to be enabled with `spark.scheduler.mode=FAIR`) fairly shares cluster resources between parallel jobs from the threads.
+- *Do you always have to add the Fair Scheduler?* — NO, the default FIFO is fully correct functionally; FAIR is an optional optimisation with many jobs of different sizes/limited cluster resources.
+- *A bug found in the user's sample code (outside this project)* — the `else` branch (`multithread_processing=False`) had `.append()` OUTSIDE the loop (wrong indentation) — it would only work for the last iteration; plus a missing initialisation `schema_output=[]` in that branch.
 
-## 8. Walidacja danych (`validate.py`, Faza 2)
+## 8. Data validation (`validate.py`, Phase 2)
 
-**Zrobione:** per-tabela `TABLE_EXPECTATIONS` (required_columns, not_null, PK, accepted_values), znajdowanie najnowszego pliku w S3 po `LastModified`, walidacja + kwarantanna (nic nie ginie, wszystko odrzucone trafia do `quarantine/` z dopisanym powodem). Przetestowane na zamockowanych złych danych (null, duplikat PK, zły status, brakujące kolumny) — wszystkie 4 mechanizmy złapane poprawnie. Na prawdziwych danych: 0 quarantined (dane czyste).
+**Done:** per-table `TABLE_EXPECTATIONS` (required_columns, not_null, PK, accepted_values), finding the newest file in S3 by `LastModified`, validation + quarantine (nothing is lost, everything rejected goes to `quarantine/` with the reason added). Tested on mocked bad data (null, duplicate PK, wrong status, missing columns) — all 4 mechanisms caught correctly. On real data: 0 quarantined (clean data).
 
-**Pytania/odpowiedzi:**
-- *Czy nadmiarowe kolumny wywalają błąd?* — nie, sprawdzane są tylko BRAKUJĄCE wymagane kolumny, nadmiarowe przechodzą bez ruszenia.
-- *Czy `validate_row` mówi KTÓRY wiersz ma błąd?* — pośrednio tak: cały oryginalny wiersz + `_quarantine_reasons` trafia razem do pliku w S3, więc kontekst (PK i inne pola) jest zawsze widoczny obok powodu.
-- *Set vs lista przy sprawdzaniu PK uniqueness — czy set to overkill?* — NIE; `set` (hash table) daje sprawdzenie przynależności ~natychmiastowe niezależnie od rozmiaru, lista wymaga przejrzenia wszystkiego po kolei (O(n²) łącznie dla listy vs O(n) dla seta przy dużej skali).
-- *Dlaczego PK uniqueness liczone PRZED główną pętlą, nie w jej trakcie?* — duplikat to własność CAŁEGO batcha, nie pojedynczego wiersza; nie da się ocenić "czy to duplikat" patrząc tylko na to, co już widziałeś w pętli — trzeba znać cały zbiór z góry.
-- *Co robi `_` na początku `_quarantine_reasons`?* — czysta konwencja nazewnicza (nie wymóg języka), sygnalizuje "to metadana dołożona przeze mnie, nie oryginalna kolumna źródłowa".
-- *Co robi `{value!r}` we f-stringu?* — `!r` = użyj `repr()` zamiast `str()` — pokazuje "programistyczną" reprezentację (np. cudzysłowy wokół stringów), pomaga odróżnić string od innych typów w komunikatach diagnostycznych.
-- *Set vs tuple?* — tuple: uporządkowana, niezmienna, duplikaty dozwolone (do grupowania stałych wartości); set: nieuporządkowany, bez duplikatów, zoptymalizowany pod szybkie sprawdzanie przynależności — różne przeznaczenie, nie warianty tego samego.
-- *Jaka jest procedura obsługi kwarantanny?* — na tym etapie w pełni RĘCZNA (ręczny przegląd `s3://.../quarantine/`); automatyzacja alertów/reakcji to zakres Advanced (pełny Great Expectations), świadomie odłożony.
+**Questions/answers:**
+- *Do extra columns raise an error?* — no, only MISSING required columns are checked; extra ones pass untouched.
+- *Does `validate_row` say WHICH row has the error?* — indirectly yes: the whole original row + `_quarantine_reasons` go together into the file in S3, so the context (the PK and other fields) is always visible next to the reason.
+- *Set vs list for checking PK uniqueness — is a set overkill?* — NO; a `set` (hash table) gives a near-instant membership check regardless of size, a list requires going through everything one by one (O(n²) in total for a list vs O(n) for a set at large scale).
+- *Why is PK uniqueness computed BEFORE the main loop, not during it?* — a duplicate is a property of the WHOLE batch, not of a single row; you can't judge "is this a duplicate" by looking only at what you've already seen in the loop — you need to know the whole set upfront.
+- *What does the `_` at the start of `_quarantine_reasons` do?* — a pure naming convention (not a language requirement), signalling "this is metadata added by me, not an original source column".
+- *What does `{value!r}` do in an f-string?* — `!r` = use `repr()` instead of `str()` — it shows the "programmer's" representation (e.g. quotes around strings), which helps tell a string apart from other types in diagnostic messages.
+- *Set vs tuple?* — a tuple: ordered, immutable, duplicates allowed (for grouping fixed values); a set: unordered, no duplicates, optimised for fast membership checks — different purposes, not variants of the same thing.
+- *What is the procedure for handling quarantine?* — at this stage fully MANUAL (manually reviewing `s3://.../quarantine/`); automating alerts/reactions is Advanced scope (full Great Expectations), deliberately postponed.
 
-## 9. PySpark + Iceberg (Faza 3, w toku)
+## 9. PySpark + Iceberg (Phase 3, in progress)
 
-**Zrobione:** `spark-docker/` (nowy serwis `spark-iceberg` w `docker-compose.yml`, stoi w tle jako "workbench" — `docker exec` żeby odpalać skrypty), IAM user rozszerzony o `AWSGlueConsoleFullAccess`, baza `portfolio_ecommerce` w Glue Data Catalog, `merge_customers.py` (pełne SCD2 przez `MERGE INTO` w dwóch krokach na tabeli Iceberg).
+**Done:** `spark-docker/` (a new service `spark-iceberg` in `docker-compose.yml`, running in the background as a "workbench" — `docker exec` to run scripts), the IAM user extended with `AWSGlueConsoleFullAccess`, the `portfolio_ecommerce` database in the Glue Data Catalog, `merge_customers.py` (full SCD2 via `MERGE INTO` in two steps on an Iceberg table).
 
-**Napotkane i naprawione problemy (realne, empiryczne):**
-- `bitnami/spark:3.5` — Bitnami/Broadcom w 2025 usunęło darmowe tagi wersji z Docker Hub ("No tags available"). `apache/spark-py` (oficjalny) nieaktualizowany od ~3 lat, max `v3.4.0` (za stary względem jarów Iceberga dla 3.5). Naprawa: własny `Dockerfile` od `eclipse-temurin:17-jdk-jammy` (oficjalny, aktywnie utrzymywany OpenJDK) + `pip install pyspark==3.5.5` — pełna kontrola nad wersją, mniej zależności od cudzych decyzji biznesowych.
-- `SdkClientException: Unable to load region` przy próbie `CREATE TABLE` przez Glue — AWS SDK v2 dla Javy (wewnątrz `iceberg-aws-bundle`, używane przez Iceberg/Spark) czyta WYŁĄCZNIE `AWS_REGION`, nie `AWS_DEFAULT_REGION` (którego używa `boto3`/Python). Naprawa: ustawienie OBU zmiennych w `docker-compose.yml`.
+**Problems encountered and fixed (real, empirical):**
+- `bitnami/spark:3.5` — in 2025 Bitnami/Broadcom removed the free version tags from Docker Hub ("No tags available"). `apache/spark-py` (official) hasn't been updated for ~3 years, max `v3.4.0` (too old for the Iceberg jars for 3.5). Fix: our own `Dockerfile` from `eclipse-temurin:17-jdk-jammy` (an official, actively maintained OpenJDK) + `pip install pyspark==3.5.5` — full control over the version, less dependence on other people's business decisions.
+- `SdkClientException: Unable to load region` when trying `CREATE TABLE` through Glue — the AWS SDK v2 for Java (inside `iceberg-aws-bundle`, used by Iceberg/Spark) reads ONLY `AWS_REGION`, not `AWS_DEFAULT_REGION` (which `boto3`/Python uses). Fix: set BOTH variables in `docker-compose.yml`.
 
-**Pytania/odpowiedzi:**
-- *Dlaczego Docker zamiast instalować Sparka/Javę lokalnie na macOS?* — PySpark wymaga JVM niezależnie od `pip install`; `import pyspark` się uda, ale realne użycie (`SparkSession`) wywali błąd bez Javy. Docker unika zmagań z wersjami Javy na hoście, spójnie z resztą projektu.
-- *Co się zmieniło, że trzeba było zmienić podejście (Bitnami)?* — zewnętrzna zmiana polityki dostawcy obrazu, nie błąd w projekcie; dobra ilustracja ryzyka polegania na cudzym, "wygodnym" obrazie bazowym (analogicznie do vendor lock-in, cheat sheet 15.4).
-- *Czy `spark-docker/Dockerfile` to instrukcja pobrania binarek?* — tak: `FROM` = baza (Docker Hub), `apt-get install` = pakiety Ubuntu, `pip install pyspark` = Spark+Python z PyPI, `curl` = jary Iceberga z Maven Central — cztery różne źródła, każde pobierane i składane w jeden gotowy obraz.
-- *Dlaczego `docker exec -it spark-iceberg ...` i "dziwna" ścieżka `/opt/spark-scripts/...`?* — `spark-iceberg` to nazwa kontenera (jak wcześniej `postgres-source`); ścieżka to adres WEWNĄTRZ kontenera, inny niż na hoście, bo to inny, odizolowany system plików.
-- *Dlaczego potrzebujemy pliku pod dwoma adresami, czemu kontener nie widzi folderu hosta normalnie?* — kontenery są DOMYŚLNIE odizolowane od hosta (cecha bezpieczeństwa, nie ograniczenie); bind mount (`volumes: - ./scripts:/opt/spark-scripts`) to jawny, świadomy wyjątek — TEN SAM plik fizyczny, dostępny pod dwoma ścieżkami, nie kopia (kontrast z `COPY` w Dockerfile, które robi prawdziwą kopię raz, podczas builda).
-- *Czy przechodzimy z boto3 na AWS SDK v2 dla Javy?* — NIE; oba współistnieją w jednym kontenerze, po dwóch stronach mostu py4j (sekcja 22.6) — boto3 po stronie Pythona (ściąganie surowych plików z S3), AWS SDK v2 dla Javy wewnątrz JVM/Iceberga (operacje na metadanych tabeli przez Glue), niezależnie od siebie.
-- *Co robią `up -d`/`--build`?* — `-d` = w tle; `--build` = wymuś przebudowanie obrazu (potrzebne przy zmianie Dockerfile, niepotrzebne przy samej zmianie zmiennych środowiskowych w docker-compose.yml).
+**Questions/answers:**
+- *Why Docker instead of installing Spark/Java locally on macOS?* — PySpark requires a JVM regardless of `pip install`; `import pyspark` succeeds, but real use (`SparkSession`) fails without Java. Docker avoids struggling with Java versions on the host, consistent with the rest of the project.
+- *What changed that forced a different approach (Bitnami)?* — an external change in the image provider's policy, not a bug in the project; a good illustration of the risk of relying on someone else's "convenient" base image (analogous to vendor lock-in, cheat sheet 15.4).
+- *Is `spark-docker/Dockerfile` an instruction for downloading binaries?* — yes: `FROM` = the base (Docker Hub), `apt-get install` = Ubuntu packages, `pip install pyspark` = Spark+Python from PyPI, `curl` = the Iceberg jars from Maven Central — four different sources, each downloaded and assembled into one ready image.
+- *Why `docker exec -it spark-iceberg ...` and the "weird" path `/opt/spark-scripts/...`?* — `spark-iceberg` is the container's name (like `postgres-source` earlier); the path is an address INSIDE the container, different from the host, because it is a different, isolated file system.
+- *Why do we need the file under two addresses, why doesn't the container see the host folder normally?* — containers are isolated from the host BY DEFAULT (a security feature, not a limitation); a bind mount (`volumes: - ./scripts:/opt/spark-scripts`) is an explicit, deliberate exception — THE SAME physical file, available under two paths, not a copy (in contrast to `COPY` in a Dockerfile, which makes a real copy once, during the build).
+- *Are we moving from boto3 to the AWS SDK v2 for Java?* — NO; both coexist in one container, on the two sides of the py4j bridge (section 22.6) — boto3 on the Python side (downloading raw files from S3), the AWS SDK v2 for Java inside the JVM/Iceberg (operations on table metadata through Glue), independently of each other.
+- *What do `up -d`/`--build` do?* — `-d` = in the background; `--build` = force rebuilding the image (needed when the Dockerfile changes, not needed when only environment variables change in docker-compose.yml).
 
-*Status: skrypt `merge_customers.py` w trakcie debugowania na żywo — kolejne przebiegi/poprawki dopiszę tutaj.*
+*Status: the `merge_customers.py` script is being debugged live — further runs/fixes will be added here.*
 
-**Kolejny znaleziony i naprawiony bug:** `changed_customer_ids` jako `TEMP VIEW` (leniwie liczony) zamiast konkretnej listy — przy odwołaniu się do niego w Kroku 2, Spark PRZELICZAŁ zapytanie na nowo, na stanie tabeli PO już wykonanym MERGE (gdzie zmieniony wiersz miał już `is_current=false`), więc wynik był pusty. Naprawa: `.collect()` do zwykłej listy Pythona OD RAZU po policzeniu, PRZED uruchomieniem MERGE — "zamraża" wynik, zanim tabela się zmieni.
+**Another bug found and fixed:** `changed_customer_ids` as a `TEMP VIEW` (lazily evaluated) instead of a concrete list — when it was referenced in Step 2, Spark RECOMPUTED the query on the state of the table AFTER the MERGE had already run (where the changed row already had `is_current=false`), so the result was empty. Fix: `.collect()` into a plain Python list RIGHT AFTER computing it, BEFORE running the MERGE — it "freezes" the result before the table changes.
 
-**Zweryfikowane pełne SCD2 na żywo:** `customer_id=5`, zmiana `country` LY→FR w Postgresie → `extract.py` złapał deltę → `merge_customers.py` poprawnie zamknął starą wersję (`is_current=false`, `valid_to` ustawione) i otworzył nową (`is_current=true`, `valid_to=NULL`) — dokładnie "wow moment" z dokumentu projektowego.
+**Full SCD2 verified live:** `customer_id=5`, `country` changed LY→FR in Postgres → `extract.py` caught the delta → `merge_customers.py` correctly closed the old version (`is_current=false`, `valid_to` set) and opened a new one (`is_current=true`, `valid_to=NULL`) — exactly the "wow moment" from the design document.
 
-**AWS Athena postawiona jako alternatywny, lżejszy sposób odczytu tabel Iceberg** — bez Sparka/kontenera, czysty SQL przez Glue Data Catalog. Potwierdzone: to samo zapytanie dające identyczny wynik przez Athenę (566 ms) i przez Sparka — dowód, że odczyt nie wymaga Sparka (tylko zapis/MERGE go wymaga), zgodnie z uzasadnieniem wyboru Iceberga (multi-engine, cheat sheet 15.1).
+**AWS Athena set up as an alternative, lighter way of reading the Iceberg tables** — no Spark/container, pure SQL through the Glue Data Catalog. Confirmed: the same query gives an identical result through Athena (566 ms) and through Spark — proof that reading does not require Spark (only writing/MERGE does), in line with the reason for choosing Iceberg (multi-engine, cheat sheet 15.1).
 
-**Pytania/odpowiedzi (dalszy ciąg):**
-- *Czy ta komenda testowa łączy się z S3?* — tak, z DWOMA usługami: Glue (metadane/schemat/lokalizacja) + S3 (rzeczywiste pliki danych tabeli).
-- *Czy dało się to sprawdzić prościej, bez budowania Sparka?* — tak, do ODCZYTU wystarczy silnik czytający Glue Catalog (Athena, Trino, docelowo Snowflake); Spark jest konieczny tylko do ZAPISU/MERGE, bo tylko on fizycznie przepisuje pliki tabeli.
-- *Athena z terminala przez SDK?* — tak (`aws athena start-query-execution` / `get-query-execution` / `get-query-results`, asynchronicznie w 3 kroki — Athena to usługa serverless w tle, nie lokalny proces jak `psql`), wymaga: polityki `AmazonAthenaFullAccess`, lokalizacji wyników w S3 (`athena-results/`), jednorazowej konfiguracji workgroup.
-- *Czy AWS SDK v2 dla Javy to coś, co sami wybieramy/instalujemy zamiast boto3?* — nie, przyszło "w pakiecie" wewnątrz `iceberg-aws-bundle`; współistnieje z boto3 w tym samym kontenerze, po dwóch stronach mostu py4j, każde do innych zadań (boto3 — proste operacje na plikach S3 z Pythona; SDK v2 Javy — wewnętrzne operacje Iceberga na Glue/S3).
-- *Co to JAR?* — spakowana, skompilowana biblioteka Javy — dokładny odpowiednik paczki Pythona (`pip`/`uv add`), tylko z Maven Central zamiast PyPI, ręcznie pobierana przez `curl` w Dockerfile (Spark nie ma wygodnego "menedżera pakietów" jak `uv`).
-- *Czy AWS SDK v2 faktycznie "rozmawia" z AWS?* — tak, to warstwa fizycznie wysyłająca podpisane zapytania HTTP do AWS; Iceberg deleguje do niej techniczną robotę komunikacji sieciowej, sam skupiając się na logice tabeli/MERGE.
+**Questions/answers (continued):**
+- *Does this test command connect to S3?* — yes, to TWO services: Glue (metadata/schema/location) + S3 (the table's actual data files).
+- *Could this be checked more simply, without building Spark?* — yes, for READING an engine that reads the Glue Catalog is enough (Athena, Trino, eventually Snowflake); Spark is necessary only for WRITING/MERGE, because only it physically rewrites the table's files.
+- *Athena from the terminal through the SDK?* — yes (`aws athena start-query-execution` / `get-query-execution` / `get-query-results`, asynchronously in 3 steps — Athena is a serverless service in the background, not a local process like `psql`); it requires: the `AmazonAthenaFullAccess` policy, a results location in S3 (`athena-results/`), a one-time workgroup configuration.
+- *Is the AWS SDK v2 for Java something we choose/install instead of boto3?* — no, it came "in the package" inside `iceberg-aws-bundle`; it coexists with boto3 in the same container, on the two sides of the py4j bridge, each for different tasks (boto3 — simple operations on S3 files from Python; the Java SDK v2 — Iceberg's internal operations on Glue/S3).
+- *What is a JAR?* — a packaged, compiled Java library — the exact equivalent of a Python package (`pip`/`uv add`), only from Maven Central instead of PyPI, downloaded manually with `curl` in the Dockerfile (Spark has no convenient "package manager" like `uv`).
+- *Does the AWS SDK v2 actually "talk" to AWS?* — yes, it is the layer that physically sends signed HTTP requests to AWS; Iceberg delegates the technical work of network communication to it, focusing itself on the table/MERGE logic.
 
-## 10. Faza 3 — dokończenie: partycjonowanie, Athena, konsolidacja skryptów
+## 10. Phase 3 — completion: partitioning, Athena, consolidating the scripts
 
-**Zrobione:** partycjonowanie `dim_customer` dodane RETROAKTYWNIE (`ALTER TABLE ... ADD PARTITION FIELD days(valid_from)` — partition evolution, bez przepisywania starych danych) → `merge_products.py` (SCD2, analogiczne do customers) → `merge_facts.py` (generyczny, config-driven, upsert dla `orders`/`order_items`/`payments`, append-only dla `order_status_history`) → na prośbę o unifikację: `merge_customers.py` + `merge_products.py` połączone w jeden `merge_dimensions.py` (config-driven SCD2), stare pliki usunięte → AWS Athena postawiona jako lekka alternatywa do odczytu (bez Sparka) → znaleziony i naprawiony bug: Spark's JSON reader zwraca `STRING` dla pól czasowych (JSON nie ma natywnego typu timestamp) → `MERGE`/`INSERT` do kolumn `TIMESTAMP` wymaga jawnego `F.to_timestamp()` przed użyciem.
+**Done:** partitioning of `dim_customer` added RETROACTIVELY (`ALTER TABLE ... ADD PARTITION FIELD days(valid_from)` — partition evolution, without rewriting old data) → `merge_products.py` (SCD2, analogous to customers) → `merge_facts.py` (generic, config-driven, upsert for `orders`/`order_items`/`payments`, append-only for `order_status_history`) → at the request to unify: `merge_customers.py` + `merge_products.py` combined into one `merge_dimensions.py` (config-driven SCD2), old files removed → AWS Athena set up as a lightweight alternative for reading (without Spark) → a bug found and fixed: Spark's JSON reader returns `STRING` for time fields (JSON has no native timestamp type) → `MERGE`/`INSERT` into `TIMESTAMP` columns requires an explicit `F.to_timestamp()` before use.
 
-**Zasada podziału skryptów (odpowiedź na "czy nie dało się to ujednolicić"):** parametryzuj to, co różni się TYLKO wartościami (nazwy kolumn, klucze) — `merge_dimensions.py` łączy customers+products, bo mają IDENTYCZNY algorytm SCD2. NIE łącz rzeczy różniących się LOGIKĄ (SCD2 dwuetapowe vs prosty upsert jednoetapowy) — `merge_facts.py` zostaje osobno, bo to inny algorytm, nie inna konfiguracja.
+**The rule for splitting scripts (the answer to "couldn't this be unified"):** parameterise what differs ONLY in values (column names, keys) — `merge_dimensions.py` combines customers+products, because they have an IDENTICAL SCD2 algorithm. Do NOT combine things that differ in LOGIC (two-step SCD2 vs a simple one-step upsert) — `merge_facts.py` stays separate, because it is a different algorithm, not a different configuration.
 
-**Pytania/odpowiedzi:**
-- *Dlaczego Hive nie potrafi partycjonować retroaktywnie, a Iceberg tak?* — w Hive partycja JEST fizyczną ścieżką folderu (dane muszą leżeć w `kolumna=wartość/`), zmiana wymaga przepisania wszystkich plików. W Icebergu partycja to wpis w WARSTWIE METADANYCH (manifest), niezależny od fizycznej lokalizacji pliku — `ALTER TABLE ADD PARTITION FIELD` zmienia regułę na przyszłość, stare pliki zostają nietknięte.
-- *Czy Iceberg jest więc "płaski"?* — nie do końca; nadal ma jakąś fizyczną strukturę na dysku, ale silnik NIE odczytuje partycji z nazwy folderu, tylko z metadanych — to metadane są źródłem prawdy, nie ścieżka.
-- *Różnica CDC vs SCD?* — CDC (watermark w `extract.py`) to mechanizm TECHNICZNY wykrywania/transportu zmiany ze źródła; SCD (Type 1/2/3, `merge_dimensions.py`) to wzorzec MODELOWANIA, jak zapisać tę zmianę w warstwie docelowej. CDC stosuje się do WSZYSTKICH tabel źródłowych; SCD2 tylko do wymiarów (fakty dostają prosty upsert).
-- *Czy zgubię pośrednią zmianę (np. kraj zmieniony 2x podczas przerwy w ekstrakcji) przy watermarku?* — TAK, zawsze, niezależnie od tego czy backfill robi się dzień-po-dniu czy jednym przebiegiem — bo Postgres (OLTP, SCD Type 1) nadpisuje w miejscu, pośredni stan fizycznie znika ze źródła ZANIM pipeline go zobaczy. To ograniczenie watermark-based CDC, nie backfillu — naprawia to tylko log-based CDC (Debezium).
-- *Po co więc backfill dzień-po-dniu, skoro ciągły watermark i tak łapie wszystko jednym przebiegiem?* — dla PIPELINE'ÓW SPARAMETRYZOWANYCH DATĄ (np. `WHERE order_date = '2026-09-15'` jako filtr, nie ciągły watermark) dzień-po-dniu jest KONIECZNY, bo każdy dzień to inny wycinek zapytania. Dla ciągłego watermarku (nasz `extract.py`) różnica to głównie izolacja błędu/audytowalność w UI, NIE różnica w złapanych danych.
-- *Co to "data logiczna" (`execution_date`/`logical_date`)?* — data ZA JAKI okres dane mają być, niezależna od tego KIEDY fizycznie kod się wykonał (ważne przy backfillu — 25 września odpalony kod może "udawać" że jest 15 września).
-- *Dlaczego `valid_from`/`valid_to` powinny brać się z `source.updated_at`, nie `current_timestamp()`?* — event time (kiedy zmiana NAPRAWDĘ się wydarzyła w Postgresie) vs processing time (kiedy skrypt MERGE się odpalił) — jeśli MERGE działa z opóźnieniem względem ekstrakcji (albo przy przebudowie tabeli od zera), `current_timestamp()` dałoby błędne, mylące daty w historii SCD2. NIE naprawia to utraty danych u źródła (inny, głębszy problem) — tylko poprawność dat DLA DANYCH, które faktycznie przetrwały do S3.
-- *Czy warto trzymać config (`DIMENSIONS`/`TABLES` dict) w osobnym pliku JSON/YAML zamiast w Pythonie?* — komercyjnie tak przy DUŻEJ skali (metadata-driven pattern, jak własne doświadczenie z P&G/STTM) — YAML/tabela kontrolna pozwala nieprogramistom edytować config, czytelniejszy diff. Przy małej skali (2-4 tabele, jak tu) Python jest czytelniejszy i bezpieczniejszy typowo (type hints) — decyzja o skali, nie uniwersalna zasada.
-- *Co robi kontener `spark-iceberg` — czy to tylko komunikacja z AWS SDK?* — NIE, to przede wszystkim SILNIK PRZETWARZANIA (Spark/JVM wykonujący `MERGE`, dedup, itd.); AWS SDK v2 to tylko JEDEN z komponentów wewnątrz, używany gdy Iceberg akurat musi dotrzeć do Glue/S3 — analogia: fabryka (produkuje), nie kurier (tylko dostarcza).
-- *Czy taki setup (Spark w jednym kontenerze Docker) używany jest komercyjnie?* — tak, ale WYŁĄCZNIE do local dev/CI/CD/małych zadań — jeden kontener = jedna maszyna, brak prawdziwego rozproszenia. Produkcyjnie: Databricks, AWS EMR/EMR Serverless, AWS Glue Jobs (ten sam Glue już używany jako katalog!), Spark na Kubernetes.
-- *Co to sandbox, jak ma się do Dockera?* — sandbox to OGÓLNY KONCEPT (odizolowane środowisko do bezpiecznego testowania), Docker to JEDNA z technologii do jego realizacji (inne: osobne konto AWS, VM, sandbox przeglądarki/JS, środowisko CI). Nie każdy kontener Dockera pełni rolę sandboxa (np. `postgres-source` to realna infrastruktura, nie sandbox) — zależy od CELU użycia, nie samej technologii.
+**Questions/answers:**
+- *Why can't Hive partition retroactively, while Iceberg can?* — in Hive a partition IS a physical folder path (the data must sit in `column=value/`), and changing it requires rewriting all files. In Iceberg a partition is an entry in the METADATA LAYER (the manifest), independent of the physical file location — `ALTER TABLE ADD PARTITION FIELD` changes the rule for the future, old files stay untouched.
+- *So is Iceberg "flat"?* — not quite; it still has some physical structure on disk, but the engine does NOT read the partition from the folder name, only from the metadata — the metadata is the source of truth, not the path.
+- *The difference between CDC and SCD?* — CDC (the watermark in `extract.py`) is a TECHNICAL mechanism for detecting/transporting a change from the source; SCD (Type 1/2/3, `merge_dimensions.py`) is a MODELLING pattern for how to record that change in the target layer. CDC applies to ALL source tables; SCD2 only to dimensions (facts get a simple upsert).
+- *Will I lose an intermediate change (e.g. a country changed twice during an extraction break) with a watermark?* — YES, always, regardless of whether the backfill is done day by day or in one run — because Postgres (OLTP, SCD Type 1) overwrites in place, and the intermediate state physically disappears from the source BEFORE the pipeline sees it. This is a limitation of watermark-based CDC, not of the backfill — only log-based CDC (Debezium) fixes it.
+- *Then why backfill day by day, if a continuous watermark catches everything in one run anyway?* — for PIPELINES PARAMETERISED BY DATE (e.g. `WHERE order_date = '2026-09-15'` as a filter, not a continuous watermark) day by day is NECESSARY, because each day is a different slice of the query. For a continuous watermark (our `extract.py`) the difference is mainly error isolation/auditability in the UI, NOT a difference in the data caught.
+- *What is the "logical date" (`execution_date`/`logical_date`)?* — the date FOR WHICH period the data is meant to be, independent of WHEN the code physically ran (important for backfills — code run on 25 September can "pretend" it is 15 September).
+- *Why should `valid_from`/`valid_to` come from `source.updated_at`, not `current_timestamp()`?* — event time (when the change REALLY happened in Postgres) vs processing time (when the MERGE script ran) — if the MERGE runs with a delay relative to the extraction (or when rebuilding the table from scratch), `current_timestamp()` would give wrong, misleading dates in the SCD2 history. It does NOT fix data loss at the source (a different, deeper problem) — only the correctness of the dates FOR THE DATA that actually made it to S3.
+- *Is it worth keeping the config (the `DIMENSIONS`/`TABLES` dict) in a separate JSON/YAML file instead of in Python?* — commercially yes at a LARGE scale (the metadata-driven pattern, as in my own experience at P&G/STTM) — YAML/a control table lets non-programmers edit the config, with a more readable diff. At a small scale (2-4 tables, as here) Python is more readable and type-safer (type hints) — a decision about scale, not a universal rule.
+- *What does the `spark-iceberg` container do — is it only communication with the AWS SDK?* — NO, it is first of all a PROCESSING ENGINE (Spark/JVM executing `MERGE`, dedup, etc.); the AWS SDK v2 is only ONE of the components inside, used when Iceberg needs to reach Glue/S3 — an analogy: a factory (produces), not a courier (only delivers).
+- *Is such a setup (Spark in a single Docker container) used commercially?* — yes, but ONLY for local dev/CI/CD/small jobs — one container = one machine, no real distribution. In production: Databricks, AWS EMR/EMR Serverless, AWS Glue Jobs (the same Glue already used as the catalog!), Spark on Kubernetes.
+- *What is a sandbox, how does it relate to Docker?* — a sandbox is a GENERAL CONCEPT (an isolated environment for safe testing), Docker is ONE of the technologies to implement it (others: a separate AWS account, a VM, a browser/JS sandbox, a CI environment). Not every Docker container acts as a sandbox (e.g. `postgres-source` is real infrastructure, not a sandbox) — it depends on the PURPOSE of use, not the technology itself.
 
-**Kolejny znaleziony i naprawiony bug (ten sam mechanizm co timestamp, inny typ):** `extract.py`'s `json.dumps(..., default=str)` zamienia na string RÓWNIEŻ wartości `Decimal` (nie tylko daty) — `price`/`unit_price`/`amount` też wymagały jawnego rzutowania (`cast(col_type)`) przed zapisem do kolumn `DECIMAL(10,2)` w Icebergu.
+**Another bug found and fixed (the same mechanism as the timestamp, a different type):** `extract.py`'s `json.dumps(..., default=str)` turns `Decimal` values into strings TOO (not only dates) — `price`/`unit_price`/`amount` also needed an explicit cast (`cast(col_type)`) before being written to `DECIMAL(10,2)` columns in Iceberg.
 
-**Faza 3 zakończona, w pełni zweryfikowana na prawdziwych danych:** wszystkie 6 tabel poprawnie zmergowane — `dim_customer` (51 wierszy z historią), `dim_product` (30), `fact_orders` (200), `fact_order_items` (502), `fact_payments` (160), `fact_order_status_history` (493) — liczby zgodne z surowymi danymi z `seed.py`.
+**Phase 3 complete, fully verified on real data:** all 6 tables correctly merged — `dim_customer` (51 rows with history), `dim_product` (30), `fact_orders` (200), `fact_order_items` (502), `fact_payments` (160), `fact_order_status_history` (493) — counts consistent with the raw data from `seed.py`.
 
-**Weryfikacja partycjonowania (Athena, `SELECT * FROM "table$partitions"`):** `fact_orders` → 80 partycji (jedna per dzień z aktywnością, rozrzucone 20 czerwca - 13 września, zgodnie z 90-dniowym rozrzutem `seed.py`); `dim_product` → 24 partycje (podobnie rozrzucone, bo nigdy ręcznie nie testowaliśmy UPDATE na products); `dim_customer` → tylko 1 partycja (bo wszystkie SCD2-testowe zmiany działy się "dzisiaj", podczas naszych testów) — wszystkie trzy wyniki poprawne i zgodne z oczekiwaniami, nie błędy.
+**Partitioning verification (Athena, `SELECT * FROM "table$partitions"`):** `fact_orders` → 80 partitions (one per day with activity, spread between 20 June and 13 September, consistent with the 90-day spread of `seed.py`); `dim_product` → 24 partitions (similarly spread, because we never manually tested an UPDATE on products); `dim_customer` → only 1 partition (because all SCD2 test changes happened "today", during our tests) — all three results correct and as expected, not errors.
 
-**Pytania/odpowiedzi (partycjonowanie w praktyce):**
-- *Jak zobaczyć partycjonowanie namacalnie (S3/Glue/Athena)?* — `aws s3 ls .../data/ --recursive` pokazuje SUROWE pliki (ale BEZ czytelnych nazw folderów partycji — patrz niżej); najlepszy dowód to Athena `SELECT * FROM "tabela$partitions"` albo Spark `SELECT * FROM catalog.db.tabela.partitions`.
-- *Dlaczego pliki w S3 nie mają w nazwie/ścieżce wartości partycji (np. `valid_from_day=...`)?* — skorygowana wcześniejsza odpowiedź: ten silnik zapisu NIE koduje wartości partycji w ścieżce pliku wcale — to jeszcze bardziej "ukryte" partycjonowanie niż opisane pierwotnie; cała informacja żyje WYŁĄCZNIE w metadanych (manifesty Avro), nieczytelnych przez zwykłe `ls`.
-- *Gdzie w kodzie widać różnicę upsert (facts) vs append-only (order_status_history)?* — `merge_facts.py`, flaga `config["append_only"]` (per tabela) rozgałęzia wygenerowany SQL: `True` → tylko `WHEN NOT MATCHED THEN INSERT` (brak gałęzi UPDATE w ogóle); `False` → dodatkowo `WHEN MATCHED THEN UPDATE SET ...` (pełny upsert).
+**Questions/answers (partitioning in practice):**
+- *How can I see the partitioning tangibly (S3/Glue/Athena)?* — `aws s3 ls .../data/ --recursive` shows the RAW files (but WITHOUT readable partition folder names — see below); the best proof is Athena `SELECT * FROM "table$partitions"` or Spark `SELECT * FROM catalog.db.table.partitions`.
+- *Why don't the files in S3 have the partition value in their name/path (e.g. `valid_from_day=...`)?* — a corrected earlier answer: this write engine does NOT encode partition values in the file path at all — an even more "hidden" partitioning than originally described; all the information lives ONLY in the metadata (Avro manifests), unreadable with a plain `ls`.
+- *Where in the code can you see the difference between upsert (facts) and append-only (order_status_history)?* — `merge_facts.py`, the `config["append_only"]` flag (per table) branches the generated SQL: `True` → only `WHEN NOT MATCHED THEN INSERT` (no UPDATE branch at all); `False` → additionally `WHEN MATCHED THEN UPDATE SET ...` (a full upsert).
 
-## 11. Faza 3 zamknięta — handoff do nowej rozmowy
+## 11. Phase 3 closed — handoff to a new conversation
 
-**Status:** Faza 3 (PySpark + Iceberg) w pełni zakończona i zweryfikowana: MERGE/SCD2/idempotencja/partycjonowanie/Glue REST catalog — wszystkie punkty z ADR-002 pokryte, na prawdziwych danych, z dowodami z dwóch niezależnych silników (Spark do zapisu, Athena do odczytu).
+**Status:** Phase 3 (PySpark + Iceberg) fully completed and verified: MERGE/SCD2/idempotency/partitioning/Glue REST catalog — all points from ADR-002 covered, on real data, with evidence from two independent engines (Spark for writing, Athena for reading).
 
-**Decyzja:** kontynuacja (Faza 4 — Snowflake) w NOWYM czacie, żeby uniknąć degradacji jakości w bardzo długiej rozmowie. Ten plik (`PROGRESS_LOG.md`) + `DE_Interview_Cheatsheet.docx` to punkt wejścia dla nowego czatu — muszą być wgrane jako aktualne pliki projektu (nie tylko pobrane lokalnie), żeby nowa rozmowa miała pełny kontekst bez powtarzania historii.
+**Decision:** continue (Phase 4 — Snowflake) in a NEW chat, to avoid quality degradation in a very long conversation. This file (`PROGRESS_LOG.md`) + `DE_Interview_Cheatsheet.docx` are the entry point for the new chat — they must be uploaded as current project files (not just downloaded locally), so that the new conversation has full context without repeating the history.
 
-**Co powinien wiedzieć nowy czat na start:** cała infrastruktura stoi (`docker-compose.yml`: Postgres źródłowe+metadanych, Airflow, Spark+Iceberg), AWS gotowe (S3 bucket, IAM user `portfolio-pipeline`, Glue Data Catalog z bazą `portfolio_ecommerce`, Athena skonfigurowana), 6 tabel Iceberg istnieje i ma dane (`dim_customer`, `dim_product`, `fact_orders`, `fact_order_items`, `fact_payments`, `fact_order_status_history`), GitHub ingestion też gotowe (4 encje z `apache/airflow`). Następny krok wg planu: Faza 4 — integracja Snowflake z tymi samymi tabelami Iceberg przez Glue Catalog, RBAC, dynamic masking, RLS.
+**What the new chat should know at the start:** all the infrastructure is up (`docker-compose.yml`: source+metadata Postgres, Airflow, Spark+Iceberg), AWS is ready (S3 bucket, IAM user `portfolio-pipeline`, Glue Data Catalog with the `portfolio_ecommerce` database, Athena configured), 6 Iceberg tables exist and hold data (`dim_customer`, `dim_product`, `fact_orders`, `fact_order_items`, `fact_payments`, `fact_order_status_history`), GitHub ingestion is ready too (4 entities from `apache/airflow`). The next step according to the plan: Phase 4 — integrating Snowflake with the same Iceberg tables through the Glue Catalog, RBAC, dynamic masking, RLS.
 
-## 12. Faza 4 — start: plan i decyzje integracji Snowflake
+## 12. Phase 4 — start: plan and decisions for the Snowflake integration
 
-**Kontekst wejściowy (nowy czat):** cała infrastruktura z Fazy 1-3 stoi i działa —
-AWS (S3 bucket, IAM user `portfolio-pipeline`, Glue Data Catalog z bazą
-`portfolio_ecommerce`, Athena), Docker (Postgres źródłowe+metadanych, Airflow,
-Spark+Iceberg), 6 tabel Iceberg z realnymi danymi.
+**Starting context (new chat):** all the infrastructure from Phases 1-3 is up and running —
+AWS (S3 bucket, IAM user `portfolio-pipeline`, Glue Data Catalog with the
+`portfolio_ecommerce` database, Athena), Docker (source+metadata Postgres, Airflow,
+Spark+Iceberg), 6 Iceberg tables with real data.
 
-**Plan Fazy 4 (ustalony):**
-1. Snowflake trial (30 dni, $400 kredytu), AWS + `eu-central-1`
-2. IAM rola + trust policy (external ID) dla Snowflake
-3. Catalog integration typu REST (`ICEBERG_REST`, `CATALOG_API_TYPE = AWS_GLUE`, `SIGV4`)
+**Phase 4 plan (agreed):**
+1. Snowflake trial (30 days, $400 credit), AWS + `eu-central-1`
+2. An IAM role + trust policy (external ID) for Snowflake
+3. A REST catalog integration (`ICEBERG_REST`, `CATALOG_API_TYPE = AWS_GLUE`, `SIGV4`)
 4. External volume → S3 bucket
-5. Catalog-linked database (auto-discovery istniejących 6 tabel z Glue, bez ręcznych `CREATE ICEBERG TABLE`)
-6. RBAC (hierarchia ról, granty)
-7. Dynamic data masking (np. `email` w `dim_customer`)
-8. Row-level security (np. widoczność zamówień per region/segment)
-9. Weryfikacja przez Query Profile (dowód odczytu z Iceberga/S3, nie kopii)
+5. A catalog-linked database (auto-discovery of the existing 6 tables from Glue, without manual `CREATE ICEBERG TABLE`)
+6. RBAC (role hierarchy, grants)
+7. Dynamic data masking (e.g. `email` in `dim_customer`)
+8. Row-level security (e.g. visibility of orders per region/segment)
+9. Verification through the Query Profile (proof of reading from Iceberg/S3, not a copy)
 
-**Decyzja (pełne uzasadnienie i odrzucone alternatywy → `ADR-004`):**
-- REST catalog integration, nie klasyczna `CATALOG_SOURCE = GLUE` (Snowflake
-  jawnie rekomenduje REST, klasyczna ścieżka oznaczona jako do wygaszenia).
-- `ACCESS_DELEGATION_MODE = EXTERNAL_VOLUME_CREDENTIALS`, nie `VENDED_CREDENTIALS`
-  — unikamy wprowadzania AWS Lake Formation jako nowej warstwy dostępu obok już
-  działającego modelu IAM-role-per-service; ten sam wzorzec decyzyjny co przy
-  Python dict vs YAML w Fazie 3 (nie dodawaj złożoności bez wymuszenia skalą).
-- Catalog-linked database zamiast ręcznej deklaracji tabel — pasuje do tego,
-  że tabele już istnieją z Fazy 3, nie są tworzone od zera przez Snowflake.
+**Decision (full justification and rejected alternatives → `ADR-004`):**
+- A REST catalog integration, not the classic `CATALOG_SOURCE = GLUE` (Snowflake
+  explicitly recommends REST; the classic path is marked as being phased out).
+- `ACCESS_DELEGATION_MODE = EXTERNAL_VOLUME_CREDENTIALS`, not `VENDED_CREDENTIALS`
+  — we avoid introducing AWS Lake Formation as a new access layer next to the already
+  working IAM-role-per-service model; the same decision pattern as with the
+  Python dict vs YAML in Phase 3 (don't add complexity unless scale forces it).
+- A catalog-linked database instead of declaring tables manually — fits the fact
+  that the tables already exist from Phase 3 and are not created from scratch by Snowflake.
 
-**Status:** plan zaakceptowany, start od punktu 1 (założenie konta Snowflake trial)
-w kolejnej wiadomości.
+**Status:** plan accepted, starting from point 1 (creating the Snowflake trial account)
+in the next message.
 
-## 13. Faza 4 — konto Snowflake założone, primer podstaw
+## 13. Phase 4 — Snowflake account created, a primer on the basics
 
-**Zrobione:** rejestracja trial (30 dni, $400 kredytu) — edycja **Enterprise**
-(wymagana dla Dynamic Data Masking i Row Access Policies z punktów 7-8 planu;
-Standard ich w ogóle nie ma — twardy gate na poziomie edycji, nie ustawienie do
-włączenia), cloud **AWS**, region **EU (Frankfurt)** — zgodność z S3/Glue.
-Zalogowano na roli `ACCOUNTADMIN` (super-admin, używany tylko do setupu, nie
-do codziennej pracy — część tematu RBAC z punktu 6).
+**Done:** trial registration (30 days, $400 credit) — **Enterprise** edition
+(required for Dynamic Data Masking and Row Access Policies from points 7-8 of the plan;
+Standard doesn't have them at all — a hard gate at the edition level, not a setting to
+turn on), cloud **AWS**, region **EU (Frankfurt)** — consistent with S3/Glue.
+Logged in with the `ACCOUNTADMIN` role (super-admin, used only for setup, not
+for everyday work — part of the RBAC topic from point 6).
 
-**Pytania/odpowiedzi:**
-- *Czy trial jest darmowy, edycja Enterprise vs Standard coś kosztuje w trialu?*
-  — w pełni darmowe, brak karty kredytowej; obie edycje kosztują dokładnie tyle
-  samo z puli $400 podczas trialu, różnica w cenie kredytu (Standard $2 vs
-  Enterprise $3) liczy się dopiero PO trialu, przy przejściu na płatne konto.
-  Realny koszt do pilnowania to zużycie kredytu (storage + compute), nie edycja
-  — auto-suspend na warehousie ma zostać włączony, nie wyłączany.
-- *Warto dołączyć Snowflake CoCo (AI coding agent natywny dla Snowflake) do
-  projektu?* — odrzucone. Sprzeczne z ADR-003 (świadomie ograniczony workflow
-  Claude Code + Codex); ryzyko, że AI napisze RBAC/masking/RLS za użytkownika,
-  co podważa cel Fazy 4 (rozumienie tych mechanizmów pod interview). Ewentualne
-  wspomnienie jako "awareness" w cheat sheecie odłożone, niezrobione.
-- *Czy dane na Snowflake to tylko metadane?* — nie: metadane (schema, manifesty
-  Iceberga, statystyki do file pruning) są jedyną rzeczą synchronizowaną przez
-  Snowflake; same wartości wierszy fizycznie zostają w plikach Parquet w S3 i są
-  czytane na żywo przy każdym zapytaniu przez compute Snowflake (warehouse) —
-  ten sam wzorzec multi-engine co Spark/Athena w Fazie 3, nie kopia danych do
-  storage'u Snowflake (co różni to od zwykłej natywnej tabeli Snowflake).
-- *Co to manifest, Avro vs Parquet vs Delta transaction log?* — pełne
-  rozwinięcie z przykładami i analogią do `git checkout` vs kolejki łatek
-  przeniesione do cheat sheeta, sekcja **15.1.1** (nowa), żeby nie duplikować
-  ogólnej teorii w dwóch miejscach — tu tylko odnotowanie, że temat był i gdzie
-  szukać szczegółów.
+**Questions/answers:**
+- *Is the trial free, does the Enterprise vs Standard edition cost anything in the trial?*
+  — fully free, no credit card; both editions cost exactly the same
+  from the $400 pool during the trial; the difference in credit price (Standard $2 vs
+  Enterprise $3) only counts AFTER the trial, when moving to a paid account.
+  The real cost to watch is credit consumption (storage + compute), not the edition
+  — auto-suspend on the warehouse is to be kept on, not turned off.
+- *Is it worth adding Snowflake CoCo (an AI coding agent native to Snowflake) to the
+  project?* — rejected. It contradicts ADR-003 (a deliberately limited workflow of
+  Claude Code + Codex); the risk that the AI writes the RBAC/masking/RLS for the user,
+  which undermines the goal of Phase 4 (understanding these mechanisms for interviews). A possible
+  mention as "awareness" in the cheat sheet postponed, not done.
+- *Is the data in Snowflake only metadata?* — no: the metadata (schema, Iceberg
+  manifests, statistics for file pruning) is the only thing synchronised by
+  Snowflake; the row values themselves physically stay in Parquet files in S3 and are
+  read live on every query by Snowflake's compute (the warehouse) —
+  the same multi-engine pattern as Spark/Athena in Phase 3, not a copy of the data into
+  Snowflake's storage (which is what distinguishes it from an ordinary native Snowflake table).
+- *What is a manifest, Avro vs Parquet vs the Delta transaction log?* — the full
+  explanation with examples and an analogy to `git checkout` vs a queue of patches
+  moved to the cheat sheet, section **15.1.1** (new), so as not to duplicate
+  general theory in two places — here only a note that the topic came up and where
+  to look for details.
 
-**Primer podstaw Snowflake (przed IAM/catalog integration):** warehouse (silnik
-compute, nie storage — od tego płacisz), database → schema → table (analogicznie
-do `katalog.schemat.tabela` w Glue/Sparku), RBAC przez role (nie bezpośrednio na
-usera), worksheet (SQL przez UI, odpowiednik `docker exec` do Sparka),
-`ACCOUNTADMIN` jako rola startowa tylko do setupu, model kosztów (storage tanie/
-prawie zerowe u nas, bo dane leżą w S3; compute = warehouse, płatne tylko gdy
-"chodzi").
+**A primer on Snowflake basics (before IAM/catalog integration):** a warehouse (a compute
+engine, not storage — that's what you pay for), database → schema → table (analogous
+to `catalog.schema.table` in Glue/Spark), RBAC through roles (not directly on
+the user), a worksheet (SQL through the UI, the equivalent of `docker exec` into Spark),
+`ACCOUNTADMIN` as the starting role only for setup, the cost model (storage cheap/
+almost zero for us, because the data sits in S3; compute = the warehouse, paid only when
+it "runs").
 
-**Status:** gotowość do kroku 2 planu — IAM rola + trust policy dla Snowflake.
+**Status:** ready for step 2 of the plan — the IAM role + trust policy for Snowflake.
 
-## 14. Faza 4 — catalog integration domknięta (Glue REST)
+## 14. Phase 4 — catalog integration finished (Glue REST)
 
-**Zrobione:** IAM policy `snowflake-glue-catalog-read` (read-only: `GetCatalog`/
-`GetDatabase`/`GetDatabases`/`GetTable`/`GetTables`, scoped do bazy
-`portfolio_ecommerce`) → IAM rola `snowflake-glue-catalog-role` z tymczasowym
-trust policy (placeholder: zaufanie do własnego konta + dummy external ID) →
-`CREATE CATALOG INTEGRATION glue_rest_catalog_int` w Snowflake (`ICEBERG_REST`,
+**Done:** IAM policy `snowflake-glue-catalog-read` (read-only: `GetCatalog`/
+`GetDatabase`/`GetDatabases`/`GetTable`/`GetTables`, scoped to the database
+`portfolio_ecommerce`) → IAM role `snowflake-glue-catalog-role` with a temporary
+trust policy (a placeholder: trust in our own account + a dummy external ID) →
+`CREATE CATALOG INTEGRATION glue_rest_catalog_int` in Snowflake (`ICEBERG_REST`,
 `CATALOG_API_TYPE = AWS_GLUE`, `SIGV4`, `ACCESS_DELEGATION_MODE =
-EXTERNAL_VOLUME_CREDENTIALS` zgodnie z ADR-004) → `DESCRIBE CATALOG INTEGRATION`
-→ odczytane `GLUE_AWS_IAM_USER_ARN` + `GLUE_AWS_EXTERNAL_ID` → trust policy roli
-zaktualizowana na docelowe wartości (placeholder zastąpiony prawdziwym
-principal Snowflake).
+EXTERNAL_VOLUME_CREDENTIALS` in line with ADR-004) → `DESCRIBE CATALOG INTEGRATION`
+→ read `GLUE_AWS_IAM_USER_ARN` + `GLUE_AWS_EXTERNAL_ID` → the role's trust policy
+updated to the final values (the placeholder replaced with the real
+Snowflake principal).
 
-**Pytania/odpowiedzi:**
-- *Dlaczego rola, skoro dotąd tworzyłem tylko userów?* — user = trwałe
-  poświadczenia (access key) do WŁASNEGO, długoterminowego użytku; rola = brak
-  własnych trwałych poświadczeń, tymczasowe pożyczenie uprawnień przez
-  `AssumeRole` (token ~1h, sam wygasa) — standardowy wzorzec cross-account
-  access, gdy dostęp potrzebuje ZEWNĘTRZNY system (tu: Snowflake), nie chcesz
-  dzielić się trwałym sekretem.
-- *Czy rola "przepada" po jednym użyciu?* — nie, rola istnieje trwale jak user;
-  jednorazowy/tymczasowy jest tylko TOKEN wydawany przy każdym `AssumeRole`,
-  nie sama rola — Snowflake będzie assumował tę rolę przy każdym zapytaniu,
-  za każdym razem dostając nowy, krótkożyjący token.
-- *Policy vs rola — co jest pod czym?* — policy to martwy dokument (lista
-  uprawnień), nic nie robi sam z siebie, dopóki nie jest przypięty do
-  tożsamości (user/rola/grupa); rola = pojemnik złożony z DWÓCH części: trust
-  policy ("kto może mnie assumować" = authn) + przypięta permissions policy
-  ("co wolno po wejściu" = authz).
-- *Czy to jest authentication i authorization?* — tak: trust policy = AuthN
-  (czy w ogóle wpuszczam), permissions policy = AuthZ (co wolno dotknąć);
-  zastrzeżenie: w AWS `AssumeRole` oba kroki zlewają się w jedno wywołanie API
-  (nie są tak ostro rozdzielone jak np. w klasycznym OAuth), ale koncepcyjny
-  podział jest identyczny — ta sama uniwersalna zasada co w cheat sheet 14.6.
-- *Czy jawne wpisywanie AWS Account ID w ARN-ach jest niebezpieczne?* — nie,
-  Account ID to publiczny identyfikator (jak NIP), nie sekret — sam w sobie nie
-  daje dostępu. Prawdziwie wrażliwe są access/secret keys. Tak samo robi się to
-  na produkcji (Terraform/CloudFormation z Account ID jako zwykłą zmienną, nie
-  secretem).
-- *Dlaczego `Principal` w trust policy zmienia się z placeholdera na
-  `GLUE_AWS_IAM_USER_ARN`?* — kolejność wymuszona zależnością czasową: Snowflake
-  wymaga ARN JAKIEJŚ roli już przy `CREATE CATALOG INTEGRATION`, ale własnego,
-  docelowego IAM usera (do którego trust policy ma finalnie zaufać) generuje
-  DOPIERO w trakcie tworzenia integracji — poznajemy go dopiero z `DESCRIBE`.
-  Placeholder nie był nigdy docelową wartością, tylko technicznym wymogiem
-  "trust policy nie może być pusta".
-- *Po co external ID skoro jest już ARN?* — Snowflake używa TEGO SAMEGO
-  wewnętrznego IAM usera dla wielu swoich klientów naraz ("Snowflake provisions
-  a single IAM user for your entire Snowflake account") — external ID chroni
-  przed confused deputy problem (inny klient Snowflake, znający ten sam ARN,
-  nie mógłby assumować akurat TEJ roli bez znajomości TEGO konkretnego ID).
+**Questions/answers:**
+- *Why a role, when so far I have only created users?* — a user = permanent
+  credentials (an access key) for its OWN long-term use; a role = no permanent
+  credentials of its own, a temporary borrowing of permissions via
+  `AssumeRole` (a token of ~1h that expires by itself) — the standard pattern for cross-account
+  access, when an EXTERNAL system (here: Snowflake) needs access and you don't want to
+  share a permanent secret.
+- *Does the role "expire" after one use?* — no, the role exists permanently like a user;
+  only the TOKEN issued on every `AssumeRole` is one-off/temporary,
+  not the role itself — Snowflake will assume this role on every query,
+  each time getting a new, short-lived token.
+- *Policy vs role — which is under which?* — a policy is a dead document (a list of
+  permissions), it does nothing by itself until it is attached to an
+  identity (user/role/group); a role = a container made of TWO parts: a trust
+  policy ("who can assume me" = authn) + an attached permissions policy
+  ("what is allowed once inside" = authz).
+- *Is this authentication and authorization?* — yes: the trust policy = AuthN
+  (do I let you in at all), the permissions policy = AuthZ (what you may touch);
+  a caveat: in AWS `AssumeRole` both steps merge into one API call
+  (they are not as sharply separated as e.g. in classic OAuth), but the conceptual
+  split is identical — the same universal rule as in cheat sheet 14.6.
+- *Is writing the AWS Account ID explicitly in ARNs dangerous?* — no,
+  the Account ID is a public identifier (like a tax ID), not a secret — by itself it does not
+  give access. The truly sensitive things are the access/secret keys. The same is done
+  in production (Terraform/CloudFormation with the Account ID as an ordinary variable, not
+  a secret).
+- *Why does the `Principal` in the trust policy change from the placeholder to
+  `GLUE_AWS_IAM_USER_ARN`?* — an order forced by a time dependency: Snowflake
+  requires the ARN of SOME role already at `CREATE CATALOG INTEGRATION`, but it generates its own,
+  final IAM user (which the trust policy is ultimately meant to trust)
+  ONLY while creating the integration — we only learn it from `DESCRIBE`.
+  The placeholder was never the final value, only the technical requirement
+  "the trust policy can't be empty".
+- *Why an external ID when there is already an ARN?* — Snowflake uses THE SAME
+  internal IAM user for many of its customers at once ("Snowflake provisions
+  a single IAM user for your entire Snowflake account") — the external ID protects
+  against the confused deputy problem (another Snowflake customer who knows the same ARN
+  couldn't assume THIS particular role without knowing THIS specific ID).
 
-**Status:** catalog integration gotowa. Następny krok planu — external volume
-(S3, druga rola z tym samym dwuetapowym wzorcem trust policy), potem
-`CREATE DATABASE ... LINKED_CATALOG` (auto-discovery 6 tabel).
+**Status:** catalog integration ready. The next step of the plan — the external volume
+(S3, a second role with the same two-step trust policy pattern), then
+`CREATE DATABASE ... LINKED_CATALOG` (auto-discovery of the 6 tables).
 
-## 15. Faza 4 — external volume, catalog-linked database, weryfikacja na żywych danych
+## 15. Phase 4 — external volume, catalog-linked database, verification on live data
 
-**Zrobione:** IAM policy `snowflake-s3-external-volume-read` (read-only:
-`GetObject`/`ListBucket`/`GetBucketLocation`) → rola
-`snowflake-s3-external-volume-role` z własnym, jawnie wybranym external ID
-(nie generowanym przez Snowflake, w odróżnieniu od catalog integration) →
+**Done:** IAM policy `snowflake-s3-external-volume-read` (read-only:
+`GetObject`/`ListBucket`/`GetBucketLocation`) → the role
+`snowflake-s3-external-volume-role` with its own, explicitly chosen external ID
+(not generated by Snowflake, unlike the catalog integration) →
 `CREATE EXTERNAL VOLUME portfolio_ecommerce_ext_vol` (`ALLOW_WRITES = FALSE`,
-zgodnie z decyzją: Snowflake tylko czyta, jedynym pisarzem do tych 6 tabel
-zostaje Spark) → `DESC EXTERNAL VOLUME` → trust policy domknięta →
-`SYSTEM$VERIFY_EXTERNAL_VOLUME` → `PASSED` (pola read/write/list/delete
-`UNVERIFIED`, oczekiwanie przy `ALLOW_WRITES = FALSE` — funkcja nie może
-wykonać round-trip testu zapisu, to nie błąd).
+in line with the decision: Snowflake only reads, Spark remains the only writer of these 6 tables)
+→ `DESC EXTERNAL VOLUME` → trust policy finished →
+`SYSTEM$VERIFY_EXTERNAL_VOLUME` → `PASSED` (the read/write/list/delete fields
+`UNVERIFIED`, expected with `ALLOW_WRITES = FALSE` — the function can't
+perform a round-trip write test; it is not an error).
 
-**Napotkany i naprawiony bug (realny, empiryczny — ten sam charakter co
-timestamp/Decimal w Fazie 3):** pierwsza próba `CREATE DATABASE ...
-LINKED_CATALOG` zwróciła błąd `unable to load table 'dim_customer' metadata.
-Verify the catalog integration has read access`, mimo poprawnej roli Glue.
-Przyczyna: załadowanie metadanych tabeli przez Glue Iceberg REST endpoint to
-DWUETAPowa operacja — Glue zwraca tylko WSKAŹNIK do pliku `metadata.json`
-(`GetTable`), ale REST endpoint sam musi potem fizycznie OTWORZYĆ ten plik w
-S3, żeby zwrócić treść. Rola `snowflake-glue-catalog-role` miała tylko
-uprawnienia Glue, brakowało `s3:GetObject` na buckecie. Naprawa: dodany drugi
-statement (`SnowflakeGlueRestMetadataRead`) do policy
-`snowflake-glue-catalog-read`, dający tej samej roli też odczyt S3 — mimo że
-`ACCESS_DELEGATION_MODE = EXTERNAL_VOLUME_CREDENTIALS` sugerowałoby, że CAŁY
-dostęp do S3 idzie przez external volume, w praktyce catalog integration
-(Glue) i external volume (dane) to dwa NIEZALEŻNE ścieżki dostępu do S3, obie
-wymagane.
+**A bug encountered and fixed (real, empirical — the same nature as the
+timestamp/Decimal in Phase 3):** the first attempt at `CREATE DATABASE ...
+LINKED_CATALOG` returned the error `unable to load table 'dim_customer' metadata.
+Verify the catalog integration has read access`, despite a correct Glue role.
+The cause: loading a table's metadata through the Glue Iceberg REST endpoint is a
+TWO-STEP operation — Glue returns only a POINTER to the `metadata.json` file
+(`GetTable`), but the REST endpoint itself then has to physically OPEN that file in
+S3 to return its content. The role `snowflake-glue-catalog-role` had only
+Glue permissions; `s3:GetObject` on the bucket was missing. Fix: a second
+statement (`SnowflakeGlueRestMetadataRead`) added to the policy
+`snowflake-glue-catalog-read`, giving the same role S3 read access too — even though
+`ACCESS_DELEGATION_MODE = EXTERNAL_VOLUME_CREDENTIALS` would suggest that ALL
+S3 access goes through the external volume, in practice the catalog integration
+(Glue) and the external volume (data) are two INDEPENDENT S3 access paths, both
+required.
 
 **`CREATE DATABASE portfolio_ecommerce_db LINKED_CATALOG = (...) EXTERNAL_VOLUME
-= (...)`** — sukces po poprawce. `SHOW ICEBERG TABLES` pokazuje wszystkich 6
-tabel (auto-discovery zadziałało, zero ręcznych `CREATE ICEBERG TABLE`).
-`SELECT COUNT(*) FROM dim_customer` → **51** — zgodne z oczekiwaniem (50
-klientów + 1 wiersz historii SCD2 z Fazy 3). Trzeci niezależny silnik (po
-Sparku i Athenie) czytający ten sam Glue Catalog/S3 — potwierdzenie tezy
-multi-engine z ADR-002/cheat sheet 15.1.
+= (...)`** — success after the fix. `SHOW ICEBERG TABLES` shows all 6
+tables (auto-discovery worked, zero manual `CREATE ICEBERG TABLE`).
+`SELECT COUNT(*) FROM dim_customer` → **51** — as expected (50
+customers + 1 SCD2 history row from Phase 3). A third independent engine (after
+Spark and Athena) reading the same Glue Catalog/S3 — confirming the
+multi-engine thesis from ADR-002/cheat sheet 15.1.
 
-**Pytania/odpowiedzi:**
-- *Dlaczego `SHOW ICEBERG TABLES`, nie zwykłe `SHOW TABLES`?* — tabela Iceberg
-  to osobny typ obiektu w modelu Snowflake (jak `VIEW`/`EXTERNAL TABLE`), ma
-  właściwości których natywna tabela nie ma (`EXTERNAL_VOLUME`, `CATALOG`) i
-  brakuje jej typowego Time Travel Snowflake (bo historię/wersjonowanie i tak
-  daje już sam format Iceberg) — wystarczająco różne, żeby być odrębną
-  kategorią, nie wariantem z flagą.
-- *Czy to poprawne, że `customer_id=5` powtarza się w wyniku (2 wiersze)?* —
-  tak, to sedno SCD Type 2, nie błąd. Klucz biznesowy CELOWO się powtarza;
-  rzeczywista unikalność (to, po czym działa `MERGE`) to kompozyt
-  `(customer_id, valid_from)` — bez osobnej kolumny surrogate key ten kompozyt
-  JEST kluczem tabeli. `is_current=true` gwarantuje jedną aktualną wersję per
-  klient, ale samo w sobie nie jest unikalne (wielu różnych klientów ma
-  `is_current=true` jednocześnie). Pełne rozwinięcie (w tym rola surrogate key
-  w klasycznym Kimballu) przeniesione do cheat sheeta, sekcja 5.3.
-- *Dlaczego rola do catalog integration potrzebuje i Glue, i S3 — Glue jako
-  spis treści, S3 jako dane+metadane+manifesty?* — dokładnie trafna intuicja,
-  potwierdzona: Glue trzyma TYLKO wskaźnik do aktualnego `metadata.json`
-  (`GetTable`), nie zna/nie parsuje jego treści; samą treść (i dalej manifest
-  list → manifest file → dane) silnik czyta bezpośrednio z S3. Pełne
-  rozwinięcie z analogią "spis treści vs same książki" przeniesione do cheat
-  sheeta, sekcja 15.1.1.
+**Questions/answers:**
+- *Why `SHOW ICEBERG TABLES`, not an ordinary `SHOW TABLES`?* — an Iceberg table
+  is a separate object type in Snowflake's model (like `VIEW`/`EXTERNAL TABLE`), it has
+  properties that a native table doesn't have (`EXTERNAL_VOLUME`, `CATALOG`) and
+  it lacks Snowflake's typical Time Travel (because history/versioning is already
+  provided by the Iceberg format itself) — different enough to be a separate
+  category, not a variant with a flag.
+- *Is it correct that `customer_id=5` repeats in the result (2 rows)?* —
+  yes, that is the essence of SCD Type 2, not an error. The business key DELIBERATELY repeats;
+  the actual uniqueness (what `MERGE` works on) is the composite
+  `(customer_id, valid_from)` — without a separate surrogate key column this composite
+  IS the table's key. `is_current=true` guarantees one current version per
+  customer, but by itself it is not unique (many different customers have
+  `is_current=true` at the same time). The full explanation (including the role of a surrogate key
+  in classic Kimball) moved to the cheat sheet, section 5.3.
+- *Why does the catalog integration role need both Glue and S3 — Glue as the
+  table of contents, S3 as the data+metadata+manifests?* — exactly the right intuition,
+  confirmed: Glue holds ONLY a pointer to the current `metadata.json`
+  (`GetTable`), it doesn't know/parse its content; the engine reads the content itself (and then the manifest
+  list → manifest file → data) directly from S3. The full
+  explanation with the analogy "table of contents vs the books themselves" moved to the cheat
+  sheet, section 15.1.1.
 
-**Status:** read path Fazy 4 w pełni zweryfikowany na żywych danych. Zostały
-punkty 6-9 planu: RBAC, dynamic masking, row access policy, Query Profile.
-Odnotowana też (nie wdrożona jeszcze) decyzja: warstwa Gold/marty (przyszła
-faza, dbt) pójdzie w "Szkołę C" — Snowflake-managed Iceberg tables
-(`CATALOG = 'SNOWFLAKE'`, osobny external volume z `ALLOW_WRITES = TRUE`) —
-zamiast natywnych tabel Snowflake, żeby uniknąć vendor lock-in na poziomie
-warstwy serwującej (ten sam motyw co "$2.5M savings przez vendor independence"
-z P&G w cheat sheecie), zachowując przy tym pełną wydajność/funkcje Snowflake
-(masking/RLS potwierdzone jako działające wprost na tabelach Iceberg, także
-externally-managed). Decyzja do formalnego ADR dopiero przy starcie fazy dbt.
+**Status:** the Phase 4 read path is fully verified on live data. Remaining:
+points 6-9 of the plan: RBAC, dynamic masking, row access policy, Query Profile.
+Also noted (not implemented yet) a decision: the Gold layer/marts (a future
+phase, dbt) will go the "School C" way — Snowflake-managed Iceberg tables
+(`CATALOG = 'SNOWFLAKE'`, a separate external volume with `ALLOW_WRITES = TRUE`) —
+instead of native Snowflake tables, to avoid vendor lock-in at the level of the
+serving layer (the same motif as the "$2.5M savings through vendor independence"
+from P&G in the cheat sheet), while keeping Snowflake's full performance/features
+(masking/RLS confirmed to work directly on Iceberg tables, including
+externally-managed ones). The decision goes into a formal ADR only at the start of the dbt phase.
 
-## 16. Faza 4 — RBAC + Dynamic Data Masking (punkty 6-7 planu)
+## 16. Phase 4 — RBAC + Dynamic Data Masking (points 6-7 of the plan)
 
-**Zrobione (RBAC):** role `portfolio_analyst`/`portfolio_engineer` z
-dziedziczeniem (`GRANT ROLE portfolio_analyst TO ROLE portfolio_engineer`),
-wpięte pod wbudowaną hierarchię (`GRANT ROLE portfolio_engineer TO ROLE
-SYSADMIN`), granty na bazę/schemat/tabele (w tym `ON FUTURE TABLES`) +
-warehouse. Test przełączania (`USE ROLE` + `SELECT COUNT(*)`) → obie role
-zwracają 51, dziedziczenie działa.
+**Done (RBAC):** roles `portfolio_analyst`/`portfolio_engineer` with
+inheritance (`GRANT ROLE portfolio_analyst TO ROLE portfolio_engineer`),
+plugged into the built-in hierarchy (`GRANT ROLE portfolio_engineer TO ROLE
+SYSADMIN`), grants on the database/schema/tables (including `ON FUTURE TABLES`) +
+the warehouse. Switching test (`USE ROLE` + `SELECT COUNT(*)`) → both roles
+return 51, inheritance works.
 
-**Zrobione (masking):** `CREATE MASKING POLICY email_mask` na `dim_customer.
-email` (pełny email dla `portfolio_engineer`/`ACCOUNTADMIN`, `***@domena` dla
+**Done (masking):** `CREATE MASKING POLICY email_mask` on `dim_customer.
+email` (the full email for `portfolio_engineer`/`ACCOUNTADMIN`, `***@domain` for
 `portfolio_analyst`) → `ALTER ICEBERG TABLE ... MODIFY COLUMN email SET
-MASKING POLICY`. Test na żywo: `portfolio_analyst` → `***@...` potwierdzone.
+MASKING POLICY`. Live test: `portfolio_analyst` → `***@...` confirmed.
 
-**Napotkane i naprawione bugi (dwa, oba realne/empiryczne):**
+**Bugs encountered and fixed (two, both real/empirical):**
 1. `CREATE MASKING POLICY` → `This session does not have a current database` —
-   brak `USE DATABASE`/`USE SCHEMA` przed tworzeniem obiektu; naprawa: jawny
-   kontekst sesji.
-2. Po naprawie #1 → `This operation is not supported in a catalog-linked
-   database` — catalog-linked database (`portfolio_ecommerce_db`) obsługuje
-   TYLKO tworzenie schematów/tabel Iceberg/database roles, nie może hostować
-   żadnych innych obiektów Snowflake (w tym polityk). Naprawa: nowa, zwykła
-   (nie linked) baza `portfolio_governance.policies` wyłącznie na obiekty
-   governance; polityka POWSTAJE tam, ale APLIKOWANA jest na kolumnie w
-   `portfolio_ecommerce_db` przez pełną kwalifikowaną nazwę — to jest
-   wspierane i zgodne z dokumentacją Snowflake.
+   no `USE DATABASE`/`USE SCHEMA` before creating the object; fix: an explicit
+   session context.
+2. After fix #1 → `This operation is not supported in a catalog-linked
+   database` — a catalog-linked database (`portfolio_ecommerce_db`) supports
+   ONLY creating schemas/Iceberg tables/database roles, it can't host
+   any other Snowflake objects (including policies). Fix: a new, ordinary
+   (not linked) database `portfolio_governance.policies` only for governance
+   objects; the policy is CREATED there but APPLIED to a column in
+   `portfolio_ecommerce_db` through the fully qualified name — this is
+   supported and in line with Snowflake's documentation.
 
-**Pytania/odpowiedzi:**
-- *Czy dane nadal są tylko w S3, `portfolio_governance` to miejsce na dane?* —
-  nie, dane (6 tabel) fizycznie w 100% zostają w S3 bez zmian;
-  `portfolio_governance` trzyma wyłącznie definicje polityk (logika SQL, nie
-  wiersze) — ten sam rodzaj miejsca co definicje ról/grantów, nieporównywalny
-  rozmiarowo do prawdziwych danych biznesowych. Trzy niezależne warstwy: dane
+**Questions/answers:**
+- *Is the data still only in S3, is `portfolio_governance` a place for data?* —
+  no, the data (6 tables) physically stays 100% in S3 unchanged;
+  `portfolio_governance` holds only policy definitions (SQL logic, not
+  rows) — the same kind of place as role/grant definitions, not comparable
+  in size to real business data. Three independent layers: data
   (S3) / governance (Snowflake, `portfolio_governance`) / RBAC (Snowflake,
-  poziom account) — każda z innego powodu w innym miejscu.
-- *Czy widzę utworzone role w bazie danych?* — nie, role (`portfolio_analyst`
-  itd.) to obiekty na poziomie CAŁEGO KONTA (`SHOW ROLES`), niezwiązane z
-  żadną konkretną bazą — inaczej niż "database role" (osobny typ obiektu w
-  Snowflake, zamknięty wewnątrz jednej bazy, i to on akurat JEST dozwolony w
-  catalog-linked database). Projekt świadomie używa zwykłych ról account-level
-  (prostsze przy tej skali — 2 role, jeden zespół), database roles odnotowane
-  jako alternatywa, nie wdrożone.
-- *Kiedy masking, kiedy RLS?* — test decyzyjny: "czy ta osoba w ogóle powinna
-  wiedzieć, że wiersz istnieje?" — tak, ale nie wszystkie detale → masking
-  (kolumna); nie, cały rekord poza zasięgiem → RLS (wiersz znika z wyniku).
-  Pełne rozwinięcie z przykładami (multi-tenant SaaS, nauczyciel/klasa,
-  numer karty płatniczej, pensja) przeniesione do cheat sheeta, sekcja 14.4.
+  account level) — each in a different place for a different reason.
+- *Do I see the created roles in the database?* — no, roles (`portfolio_analyst`
+  etc.) are objects at the level of the WHOLE ACCOUNT (`SHOW ROLES`), unrelated to
+  any particular database — unlike a "database role" (a separate object type in
+  Snowflake, enclosed within one database, and that one IS allowed in a
+  catalog-linked database). The project deliberately uses ordinary account-level roles
+  (simpler at this scale — 2 roles, one team); database roles noted
+  as an alternative, not implemented.
+- *When masking, when RLS?* — a decision test: "should this person even
+  know that the row exists?" — yes, but not all details → masking
+  (a column); no, the whole record is out of reach → RLS (the row disappears from the result).
+  The full explanation with examples (multi-tenant SaaS, teacher/class,
+  payment card number, salary) moved to the cheat sheet, section 14.4.
 
-**Status:** punkty 6-7 planu zamknięte i zweryfikowane. Następny: punkt 8 —
-row access policy na `dim_customer.country` (symulacja: `portfolio_analyst`
-widzi tylko `country = 'DE'`, `portfolio_engineer`/`ACCOUNTADMIN` widzą
-wszystko — symetrycznie do maskowania).
+**Status:** points 6-7 of the plan closed and verified. Next: point 8 —
+a row access policy on `dim_customer.country` (simulation: `portfolio_analyst`
+sees only `country = 'DE'`, `portfolio_engineer`/`ACCOUNTADMIN` see
+everything — symmetrical to the masking).
 
-## 17. Faza 4 — RLS, Query Profile, zamknięcie fazy
+## 17. Phase 4 — RLS, Query Profile, closing the phase
 
-**Zrobione (RLS, punkt 8):** `CREATE ROW ACCESS POLICY country_rls` w
-`portfolio_governance.policies` (ten sam wzorzec co masking — polityka nie
-może powstać w catalog-linked database) → `ALTER ICEBERG TABLE dim_customer
-ADD ROW ACCESS POLICY ... ON (country)`. Test: `portfolio_analyst` → 2 wiersze
-(tylko `country='FR'`... nie, `country` filtrowany do `DE` w definicji, wynik
-zależny od rzeczywistych danych), `portfolio_engineer` → 51 (bez zmian).
-Potwierdzone działanie.
+**Done (RLS, point 8):** `CREATE ROW ACCESS POLICY country_rls` in
+`portfolio_governance.policies` (the same pattern as the masking — a policy can't
+be created in a catalog-linked database) → `ALTER ICEBERG TABLE dim_customer
+ADD ROW ACCESS POLICY ... ON (country)`. Test: `portfolio_analyst` → 2 rows
+(only `country='FR'`... no, `country` is filtered to `DE` in the definition, the result
+depends on the actual data), `portfolio_engineer` → 51 (unchanged).
+Confirmed to work.
 
-**Zrobione (Query Profile, punkt 9):** dwa napotkane, kolejne realne "zygzaki"
-z cache'em, zanim dotarliśmy do prawdziwego skanu:
-1. Pierwsze wykonanie zapytania → Query Profile pokazał `QUERY RESULT REUSE
-   [0] 100%` zamiast realnego skanu — Snowflake oddał wynik z 24h persisted
-   result cache, w ogóle nie dotykając S3/Iceberga.
-2. `ALTER SESSION SET USE_CACHED_RESULT = FALSE` odpalone jako OSOBNE
-   wykonanie (nie "Run All" razem z `SELECT`) → nie zdążyło wejść w życie,
-   drugi test też trafił w cache.
-3. Naprawa: `ALTER SESSION` + `SELECT ... AND 1=1` (celowa zmiana tekstu
-   zapytania jako dodatkowe zabezpieczenie) zaznaczone i odpalone razem →
-   realne wykonanie, `Total execution time: 121ms`, status "Success"/
-   "Finished", NIE "Result Reuse".
+**Done (Query Profile, point 9):** two real "zigzags" with the cache
+encountered one after another before we reached a real scan:
+1. The first execution of the query → the Query Profile showed `QUERY RESULT REUSE
+   [0] 100%` instead of a real scan — Snowflake returned the result from the 24h persisted
+   result cache, without touching S3/Iceberg at all.
+2. `ALTER SESSION SET USE_CACHED_RESULT = FALSE` run as a SEPARATE
+   execution (not "Run All" together with the `SELECT`) → it didn't take effect in time,
+   and the second test also hit the cache.
+3. Fix: `ALTER SESSION` + `SELECT ... AND 1=1` (a deliberate change of the query
+   text as an extra safeguard) selected and run together →
+   a real execution, `Total execution time: 121ms`, status "Success"/
+   "Finished", NOT "Result Reuse".
 
-**Dowód końcowy:** węzeł `DynamicSecureView` z `Object name: "DIM_CUSTOMER (+
-RowAccessPolicy)"` w drzewie Query Profile — RLS wstrzyknięta w plan
-wykonania (tabela przepisana jako widok z polityką), nie doklejona do wyniku
-po fakcie. Szczegółowe statystyki (bytes/partitions scanned) niedostępne przy
-tak małej tabeli (0% czasu na węzeł) — oczekiwane przy tej skali, nie błąd;
-`Query Details` (zakładka obok Profile) pokazuje podsumowanie zamiast tego.
+**Final proof:** the `DynamicSecureView` node with `Object name: "DIM_CUSTOMER (+
+RowAccessPolicy)"` in the Query Profile tree — the RLS is injected into the execution plan
+(the table rewritten as a view with the policy), not attached to the result
+after the fact. Detailed statistics (bytes/partitions scanned) are not available for
+such a small table (0% of the time on the node) — expected at this scale, not an error;
+`Query Details` (the tab next to Profile) shows a summary instead.
 
-**Dodatkowa obserwacja (poza planem, warta odnotowania):** RLS/masking
-zdefiniowane w Snowflake **NIE działają automatycznie w Athenie** — Athena
-czyta bezpośrednio z Glue+S3, z pominięciem silnika Snowflake, więc nie zna
-ani nie egzekwuje tych polityk. Governance jest natywnie jednosilnikowe
-(przywiązane do Snowflake), w odróżnieniu od FORMATU danych (Iceberg —
-faktycznie multi-engine). Istnieje mechanizm to naprawiający (Snowflake
+**An additional observation (outside the plan, worth noting):** RLS/masking
+defined in Snowflake **do NOT work automatically in Athena** — Athena
+reads directly from Glue+S3, bypassing the Snowflake engine, so it neither knows
+nor enforces these policies. Governance is natively single-engine
+(tied to Snowflake), unlike the data FORMAT (Iceberg —
+genuinely multi-engine). There is a mechanism that fixes this (Snowflake
 Horizon Iceberg REST Catalog + Scan Plan API, server-side policy enforcement
-dla zewnętrznych silników) — GA dla Sparka, dojrzałość dla innych silników
-(w tym Athena) niepotwierdzona/zmienna. Świadomie NIE wdrożone w tym
-projekcie — odnotowane jako luka do wspomnienia na rozmowie, nie do naprawy
-teraz.
+for external engines) — GA for Spark, maturity for other engines
+(including Athena) unconfirmed/variable. Deliberately NOT implemented in this
+project — noted as a gap to mention in an interview, not to fix
+now.
 
-**Pytania/odpowiedzi:**
-- *Co to jest Query Profile, kiedy się go używa?* — wizualne drzewo
-  operatorów wykonania zapytania (odpowiednik `EXPLAIN ANALYZE` z Postgresa,
-  cheat sheet 3.1), używane reaktywnie (debug wolnych zapytań — który węzeł
-  zjada czas) lub proaktywnie przy istotnych zmianach architektury
-  (weryfikacja że optymalizacja/governance faktycznie działa, nie tylko
-  "wydaje się" działać) — nie rutynowo przy każdym zapytaniu.
+**Questions/answers:**
+- *What is the Query Profile, when is it used?* — a visual tree of the
+  query's execution operators (the equivalent of `EXPLAIN ANALYZE` in Postgres,
+  cheat sheet 3.1), used reactively (debugging slow queries — which node
+  eats the time) or proactively on significant architecture changes
+  (verifying that an optimisation/governance actually works, not just
+  "seems" to work) — not routinely on every query.
 
-**Status: FAZA 4 ZAMKNIĘTA.** Wszystkie 9 punktów planu zweryfikowane na
-żywych danych: catalog integration (REST/Glue), external volume, RBAC z
-dziedziczeniem, masking, RLS, Query Profile jako dowód. Dwie decyzje do
-przyszłych faz odnotowane, nie wdrożone: "Szkoła C" (Snowflake-managed
-Iceberg dla Gold w dbt) i mechanizm Horizon IRC dla governance w Athenie
-(jeśli kiedyś uzasadnione). Następny krok: Faza 5 (dbt) — pierwszy moment
-przejścia na formalny workflow Claude Code + Codex z ADR-003 (patrz też
-ADR-003, sekcja retrospektywna).
+**Status: PHASE 4 CLOSED.** All 9 points of the plan verified on
+live data: catalog integration (REST/Glue), external volume, RBAC with
+inheritance, masking, RLS, the Query Profile as proof. Two decisions for
+future phases noted, not implemented: "School C" (Snowflake-managed
+Iceberg for Gold in dbt) and the Horizon IRC mechanism for governance in Athena
+(if ever justified). Next step: Phase 5 (dbt) — the first moment of
+switching to the formal Claude Code + Codex workflow from ADR-003 (see also
+ADR-003, the retrospective section).
 
-## 18. Faza 5 — start (dbt), decyzje projektowe + duży blok teorii przeniesiony do cheat sheeta
+## 18. Phase 5 — start (dbt), design decisions + a large block of theory moved to the cheat sheet
 
-**Plan Fazy 5 ustalony:** decyzje projektowe (tu) → scaffolding dbt (Claude Code)
-→ staging models → drugi external volume z zapisem (`ALLOW_WRITES = TRUE`, pod
-"Szkołę C") → marty jako Snowflake-managed Iceberg → testy + Codex review.
+**Phase 5 plan agreed:** design decisions (here) → dbt scaffolding (Claude Code)
+→ staging models → a second external volume with writes (`ALLOW_WRITES = TRUE`, for
+"School C") → marts as Snowflake-managed Iceberg → tests + Codex review.
 
-**Decyzje podjęte:**
-- **SCD2 zostaje w Icebergu (Spark MERGE z Fazy 3), dbt NIE robi `dbt
-  snapshot` na tych samych danych.** Uzasadnienie: unika podwójnej/duplikowanej
-  historii, zachowuje multi-engine value (SCD2 w Icebergu widoczne dla
-  Sparka/Athena/Snowflake jednakowo; SCD2 w dbt snapshot żyłby wyłącznie w
-  Snowflake jako natywna tabela), spójne z zasadą już zapisaną w cheat sheet
-  5.3 ("jedna warstwa odpowiedzialna za historię"). dbt tylko CZYTA gotowe
-  SCD2 (`WHERE is_current = true` / point-in-time join).
-- **Brak osobnego `dim_geography`.** `country` to płaski, pojedynczy atrybut
-  bez hierarchii (brak miasta/regionu w `seed.py`) — wydzielenie go byłoby
-  nadmierną normalizacją; zostaje jako degenerate attribute w `dim_customer`.
+**Decisions made:**
+- **SCD2 stays in Iceberg (Spark MERGE from Phase 3), dbt does NOT run `dbt
+  snapshot` on the same data.** Justification: it avoids double/duplicated
+  history and keeps the multi-engine value (SCD2 in Iceberg is visible to
+  Spark/Athena/Snowflake equally; SCD2 in a dbt snapshot would live only in
+  Snowflake as a native table), consistent with the rule already written in cheat sheet
+  5.3 ("one layer responsible for history"). dbt only READS the ready
+  SCD2 (`WHERE is_current = true` / a point-in-time join).
+- **No separate `dim_geography`.** `country` is a flat, single attribute
+  without a hierarchy (no city/region in `seed.py`) — extracting it would be
+  excessive normalisation; it stays as a degenerate attribute in `dim_customer`.
 
-**Duży blok Q&A o fundamentach dbt/ELT/multi-engine** (dbt czym jest i po co,
-orkiestracja vs transformacja/ADF vs Airflow vs dbt, deklaratywne vs
-imperatywne, korekta uproszczenia Bronze/Silver/Gold, Spark vs dbt przy dużej
-skali, natywne alternatywy dla dbt w Snowflake, DLT/Lakeflow i dbt-databricks,
-Snowpark jako świadomie odrzucona alternatywa, cel multi-engine w firmie) —
-**w całości przeniesiony do cheat sheeta, nowa sekcja 25** (7 podsekcji),
-żeby nie duplikować obszernej, ogólnej teorii w dzienniku projektu. Tu tylko
-odnotowanie, że temat był i gdzie szukać.
+**A large Q&A block on dbt/ELT/multi-engine fundamentals** (what dbt is and why,
+orchestration vs transformation/ADF vs Airflow vs dbt, declarative vs
+imperative, a correction of the Bronze/Silver/Gold simplification, Spark vs dbt at large
+scale, native alternatives to dbt in Snowflake, DLT/Lakeflow and dbt-databricks,
+Snowpark as a deliberately rejected alternative, the purpose of multi-engine in a company) —
+**moved in full to the cheat sheet, new section 25** (7 subsections),
+so as not to duplicate extensive, general theory in the project log. Here only
+a note that the topic came up and where to look.
 
-**Status:** decyzje Fazy 5 ustalone, gotowość do przygotowania `CLAUDE.md` i
-pierwszego zadania scaffoldingu w Claude Code.
+**Status:** Phase 5 decisions agreed, ready to prepare `CLAUDE.md` and
+the first scaffolding task in Claude Code.
 
-## 19. Faza 5 — pierwszy moment przejścia na Claude Code, staging w pełni działający
+## 19. Phase 5 — the first switch to Claude Code, staging fully working
 
-**Setup narzędziowy:** VSCode + rozszerzenie Claude Code (terminal wewnątrz
-VSCode, nie osobne okno — ten sam shell/`.venv` co dotąd, zero nowego
-środowiska), zalogowany kontem Claude.ai. `CLAUDE.md` przygotowany po
-angielsku (patrz plik w repo) — kontekst projektu, decyzje wiążące (SCD2 w
-Icebergu, brak snapshotu, Gold jako Snowflake-managed Iceberg), konwencje
-kodu, guardraile (brak `DROP`/sekretów bez potwierdzenia). Hooks
-(`.claude/settings.json`) świadomie jeszcze NIE skonfigurowane — do zrobienia
-później; do tego czasu tryb ręcznej akceptacji edycji pełni tę rolę.
-Przegląd VSCode extensions dla DE (dbt Power User, SQLFluff, Ruff, Better
-Jinja, AWS Toolkit itd.) i teoria governance AI-agentów w korpo (permission
-mode vs uprawnienia do danych, hooks jako defense-in-depth, audyt) —
-**przeniesione do cheat sheeta, nowa sekcja 26**.
+**Tooling setup:** VSCode + the Claude Code extension (a terminal inside
+VSCode, not a separate window — the same shell/`.venv` as before, zero new
+environment), logged in with a Claude.ai account. `CLAUDE.md` prepared in
+English (see the file in the repo) — the project context, binding decisions (SCD2 in
+Iceberg, no snapshot, Gold as Snowflake-managed Iceberg), code
+conventions, guardrails (no `DROP`/secrets without confirmation). Hooks
+(`.claude/settings.json`) deliberately NOT configured yet — to be done
+later; until then the manual edit-approval mode plays that role.
+A review of VSCode extensions for DE (dbt Power User, SQLFluff, Ruff, Better
+Jinja, AWS Toolkit etc.) and the theory of AI-agent governance in a corporation (permission
+mode vs data permissions, hooks as defense-in-depth, audit) —
+**moved to the cheat sheet, new section 26**.
 
-**Sesja 1 Claude Code — scaffolding + staging (zadanie: tylko staging, bez
-martów):** Plan Mode → dwa pytania architektoniczne do usera (gdzie
-hostować staging — nowa baza `portfolio_analytics`, potem przemianowana na
-**`portfolio_dbt`** żeby uniknąć pomyłki z rolą `portfolio_analyst`; jak
-obchodzić wielkość liter identyfikatorów z Glue — zweryfikować empirycznie,
-nie zgadywać) → plan zapisany do pliku, zaakceptowany w trybie ręcznej
-akceptacji edycji (nie Auto — pierwsza sesja piszącą pliki, brak jeszcze
-hooków).
+**Claude Code session 1 — scaffolding + staging (task: staging only, no
+marts):** Plan Mode → two architectural questions to the user (where to
+host staging — a new database `portfolio_analytics`, later renamed to
+**`portfolio_dbt`** to avoid confusion with the `portfolio_analyst` role; how
+to handle the case of identifiers from Glue — verify empirically,
+don't guess) → the plan saved to a file, accepted in manual
+edit-approval mode (not Auto — the first session writing files, no
+hooks yet).
 
-**Wykonanie:** `uv add dbt-core dbt-snowflake` (już były w `pyproject.toml`,
-zweryfikowane empirycznie mimo to) → `dbt init --skip-profile-setup` →
-usunięcie boilerplate, **celowe usunięcie `snapshots/`** z komentarzem w
-`dbt_project.yml` odsyłającym do `CLAUDE.md` decyzji 1 → `dbt_project.yml`
-(`materialized: view`, `schema: staging`) → `profiles.yml.example` (template,
-key-pair auth, wszystkie wartości przez `env_var()`, `profiles.yml` dopisane
-do `.gitignore`) → `schema.yml` (source `portfolio_ecommerce_db.
-portfolio_ecommerce`, `quoting` z komentarzem uzasadniającym, testy
-unique+not_null; poprawna samodzielna korekta: `data_tests:` zamiast
-przestarzałego `tests:` w dbt 1.12) → 6 modeli `stg_*.sql` (rename/cast,
-`WHERE is_current = TRUE` dla dim_*, komentarz w każdym pliku odsyłający do
-`CLAUDE.md decision 1`) → weryfikacja offline (`dbt parse`/`dbt ls`/`dbt
-compile --no-introspect` z fałszywymi env vars w scratchpadzie poza repo,
-`git check-ignore` na `profiles.yml`/`target/` — potwierdzone ignorowane).
+**Execution:** `uv add dbt-core dbt-snowflake` (they were already in `pyproject.toml`,
+verified empirically anyway) → `dbt init --skip-profile-setup` →
+removing the boilerplate, **deliberately removing `snapshots/`** with a comment in
+`dbt_project.yml` pointing to `CLAUDE.md` decision 1 → `dbt_project.yml`
+(`materialized: view`, `schema: staging`) → `profiles.yml.example` (a template,
+key-pair auth, all values via `env_var()`, `profiles.yml` added
+to `.gitignore`) → `schema.yml` (source `portfolio_ecommerce_db.
+portfolio_ecommerce`, `quoting` with a justifying comment, tests
+unique+not_null; a correct self-correction: `data_tests:` instead of
+the deprecated `tests:` in dbt 1.12) → 6 models `stg_*.sql` (rename/cast,
+`WHERE is_current = TRUE` for dim_*, a comment in every file pointing to
+`CLAUDE.md decision 1`) → offline verification (`dbt parse`/`dbt ls`/`dbt
+compile --no-introspect` with fake env vars in a scratchpad outside the repo,
+`git check-ignore` on `profiles.yml`/`target/` — confirmed ignored).
 
-**Realna infrastruktura dorobiona przez użytkownika (poza Claude Code):**
-`CREATE DATABASE portfolio_dbt` + granty `USAGE`/`CREATE SCHEMA` dla
+**Real infrastructure added by the user (outside Claude Code):**
+`CREATE DATABASE portfolio_dbt` + grants `USAGE`/`CREATE SCHEMA` for
 `portfolio_engineer` → test `SELECT "customer_id" FROM ..."dim_customer"` →
-**zadziałał bez zmian** (quoting z planu był poprawny za pierwszym razem,
-ryzyko z planu rozstrzygnięte empirycznie) → klucze RSA (`openssl genrsa
-2048` + konwersja PKCS8, Snowflake wymaga RSA, nie Ed25519) → `ALTER USER
-... SET RSA_PUBLIC_KEY` → `~/.dbt/profiles.yml` + zmienne środowiskowe
-(`DBT_SNOWFLAKE_ACCOUNT` w formacie `<ORGANIZACJA>-<KONTO>`, np.
+**worked without changes** (the quoting from the plan was correct the first time,
+the risk from the plan resolved empirically) → RSA keys (`openssl genrsa
+2048` + conversion to PKCS8, Snowflake requires RSA, not Ed25519) → `ALTER USER
+... SET RSA_PUBLIC_KEY` → `~/.dbt/profiles.yml` + environment variables
+(`DBT_SNOWFLAKE_ACCOUNT` in the format `<ORGANIZATION>-<ACCOUNT>`, e.g.
 `VIOWCJF-OO15773`) → `dbt debug` → **`All checks passed!`**.
 
-**Wynik końcowy:**
+**Final result:**
 ```
 dbt run --select staging  → PASS=6  ERROR=0
 dbt test --select staging → PASS=17 ERROR=0
 ```
-Wszystkie 6 widoków w `portfolio_dbt.dbt_dev_staging`, wszystkie testy
-(unique+not_null na PK, not_null na FK) zielone za pierwszym razem.
+All 6 views in `portfolio_dbt.dbt_dev_staging`, all tests
+(unique+not_null on the PK, not_null on the FK) green the first time.
 
-**Pytania/odpowiedzi (reużywalna teoria — pełne rozwinięcie w cheat sheet
-26):** permission mode Claude Code vs uprawnienia do danych w korpo (dwie
-osobne warstwy), hooks jako mechaniczny guardrail niezależny od tego co model
-"postanowi", VSCode setup (Python już był, dbt to zwykły pakiet nie osobny
-CLI, terminal w VSCode = ten sam terminal co systemowy, `.venv` jako
-"Workspace" interpreter), dlaczego `VIEW` a nie `TABLE`/materialized/temp dla
-stagingu (tanie, zawsze aktualne, staging jest "cienki"), Bronze/Silver/Gold
-vs staging/marts (dwie równoległe konwencje, nie sprzeczne), RSA vs Ed25519 i
-konkretne komendy `openssl`.
+**Questions/answers (reusable theory — full explanation in cheat sheet
+26):** Claude Code's permission mode vs data permissions in a corporation (two
+separate layers), hooks as a mechanical guardrail independent of what the model
+"decides", the VSCode setup (Python was already there, dbt is an ordinary package, not a separate
+CLI, the terminal in VSCode = the same terminal as the system one, `.venv` as the
+"Workspace" interpreter), why `VIEW` and not `TABLE`/materialized/temp for
+staging (cheap, always current, staging is "thin"), Bronze/Silver/Gold
+vs staging/marts (two parallel conventions, not contradictory), RSA vs Ed25519 and
+the specific `openssl` commands.
 
-**Status:** staging w pełni działający i zweryfikowany na żywych danych.
-Następny krok: Codex (niezależny review diffu tej sesji), potem external
-volume Gold (`ALLOW_WRITES = TRUE`) i marty jako Snowflake-managed Iceberg.
+**Status:** staging fully working and verified on live data.
+Next step: Codex (an independent review of this session's diff), then the external
+volume for Gold (`ALLOW_WRITES = TRUE`) and the marts as Snowflake-managed Iceberg.
 
-## 20. Faza 5 — Codex review sesji 1, oba findingi zamknięte
+## 20. Phase 5 — Codex review of session 1, both findings closed
 
-**Codex (agent w VSCode, sesja niezależna od Claude Code)** dostał: oryginalne
-zadanie + polecenie "nie implementuj od nowa, zrób adwersarialny review
-względem zadania i `CLAUDE.md`". Odpowiedział (po angielsku) dwoma
-findingami, oba potraktowane poważnie, nie odrzucone z automatu:
+**Codex (an agent in VSCode, a session independent of Claude Code)** got: the original
+task + the instruction "don't reimplement, do an adversarial review
+against the task and `CLAUDE.md`". It replied (in English) with two
+findings, both taken seriously, not dismissed automatically:
 
-- **P1 — konwersja timestampów.** `CONVERT_TIMEZONE('UTC', col)::
-  TIMESTAMP_NTZ` w 6 modelach zakłada, że źródłowe kolumny to
-  `TIMESTAMP_LTZ` (zgodnie z komentarzem Claude Code: "Spark timestamptz →
-  Snowflake surfaces as LTZ"); Codex słusznie zauważył, że to było
-  ZAŁOŻENIE, nie zweryfikowany fakt — dla `TIMESTAMP_NTZ` ta sama komenda
-  przesunęłaby wartości błędnie. **Zweryfikowane empirycznie:** `DESCRIBE
-  TABLE dim_customer` → `valid_from`/`valid_to` faktycznie `TIMESTAMP_LTZ(6)`.
-  Założenie Claude Code było poprawne, kod bez zmian. Dobry instynkt Codexa
-  jako reviewera (kwestionowanie niezweryfikowanego założenia), nawet mimo że
-  wynik potwierdził oryginalną implementację.
-- **P2 — case sensitivity identyfikatorów.** Codex tego nie mógł wiedzieć
-  (nie miał dostępu do wyniku terminala), ale `dbt test` już wcześniej
-  przeszedł `PASS=17` z tym dokładnie quotingiem — empirycznie rozstrzygnięte
-  przed review, odrzucone bez zmian kodu.
+- **P1 — timestamp conversion.** `CONVERT_TIMEZONE('UTC', col)::
+  TIMESTAMP_NTZ` in 6 models assumes that the source columns are
+  `TIMESTAMP_LTZ` (according to Claude Code's comment: "Spark timestamptz →
+  Snowflake surfaces as LTZ"); Codex rightly noticed that this was an
+  ASSUMPTION, not a verified fact — for `TIMESTAMP_NTZ` the same command
+  would shift the values incorrectly. **Verified empirically:** `DESCRIBE
+  TABLE dim_customer` → `valid_from`/`valid_to` are indeed `TIMESTAMP_LTZ(6)`.
+  Claude Code's assumption was correct, the code unchanged. A good instinct from Codex
+  as a reviewer (questioning an unverified assumption), even though the
+  result confirmed the original implementation.
+- **P2 — case sensitivity of identifiers.** Codex couldn't have known this
+  (it had no access to the terminal output), but `dbt test` had already
+  passed `PASS=17` with exactly this quoting — resolved empirically
+  before the review, dismissed without code changes.
 
-**Domknięcie pętli:** wynik `DESCRIBE TABLE` przekazany z powrotem do Codexa;
-potwierdził oba findingi jako zamknięte, zero zmian w SQL potrzebnych,
-`dbt test PASS=17` spełnia wymóg `CLAUDE.md` (`dbt run`+`dbt test` po zmianie
-modeli — tu: po review). Codex nie trafił na żaden realny błąd swojej/cudzej
-implementacji → nic do `ai/failure-log/`.
+**Closing the loop:** the `DESCRIBE TABLE` result passed back to Codex;
+it confirmed both findings as closed, zero SQL changes needed, and
+`dbt test PASS=17` meets the `CLAUDE.md` requirement (`dbt run`+`dbt test` after changing
+models — here: after the review). Codex didn't hit any real bug in its own/someone else's
+implementation → nothing for `ai/failure-log/`.
 
-**Propozycja Codexa (czeka na decyzję):** dopisać jednolinijkowe uzasadnienie
-LTZ wprost w komentarzach modeli (dziś jest tylko w planie, nie w kodzie) i
-zamienić spekulatywny komentarz o `CASE_INSENSITIVE` w `schema.yml` na
-zweryfikowany fakt. Kosmetyka dokumentacji, zero zmian w SQL — niezrobione,
-czeka na "yes/no" w kolejnej sesji.
+**Codex's proposal (awaiting a decision):** add a one-line LTZ justification
+directly in the model comments (today it is only in the plan, not in the code) and
+replace the speculative comment about `CASE_INSENSITIVE` in `schema.yml` with a
+verified fact. Documentation cosmetics, zero SQL changes — not done,
+waiting for a "yes/no" in the next session.
 
-**Status: Sesja 1 Claude Code (staging) w pełni zamknięta** — zaimplementowana,
-przetestowana na żywo, zweryfikowana niezależnym review, oba findingi
-rozstrzygnięte empirycznie. Następny krok: external volume Gold
-(`ALLOW_WRITES = TRUE`), potem marty jako Snowflake-managed Iceberg
-(Sesja 2 Claude Code).
+**Status: Claude Code session 1 (staging) fully closed** — implemented,
+tested live, verified by an independent review, both findings
+resolved empirically. Next step: the external volume for Gold
+(`ALLOW_WRITES = TRUE`), then the marts as Snowflake-managed Iceberg
+(Claude Code session 2).
 
 ---
 
-## 21. Faza 5 — nazewnictwo warstw i rename tabel Iceberg (ADR-005)
+## 21. Phase 5 — layer naming and renaming the Iceberg tables (ADR-005)
 
-**Trigger:** pytania "na którym etapie jestem" (Bronze/Silver/Gold vs staging/marts)
-i uwaga, że `dim_`/`fact_` na tabelach przed dbt myli: w praktyce i w konwencji dbt
-oznaczają finalny Gold pod Power BI (w Postgresie użytkownik trzymał osobne bazy
-bronze/silver/gold). Krytyka słuszna: nazewnictwo było nietypowe, a marty kolidowałyby
-nazwami ze źródłem. Wcześniejsza rekomendacja "zostawić, bo koszt przepisania" została
-cofnięta: koszt mylącej nazwy płaci się przy każdym onboardingu, rename tylko raz.
+**Trigger:** the questions "which stage am I at" (Bronze/Silver/Gold vs staging/marts)
+and the remark that `dim_`/`fact_` on tables before dbt is confusing: in practice and in dbt convention
+they denote the final Gold for Power BI (in Postgres the user kept separate databases
+bronze/silver/gold). The criticism was right: the naming was unusual, and the marts would collide
+by name with the source. The earlier recommendation "leave it, because of the cost of rewriting" was
+withdrawn: the cost of a misleading name is paid at every onboarding, a rename only once.
 
-**Druga opinia (ChatGPT):** `dim_`/`fact_` przed Gold nie jest uniwersalnym
-antywzorcem (na rozmowie mówić "konwencja, nie prawo"), ale w tej architekturze nazwa
-komunikuje złą granicę. Ryzyko renamu leży w tożsamości obiektu w katalogu, zależnościach
-downstream i governance, nie w danych. Opcja C (osobny namespace) dobra, ale droższa niż
-się wydaje (nazwa bazy Glue w IAM, catalog integration, catalog-linked DB, Spark, dbt).
-Najcenniejsza uwaga: dlaczego model wymiarowy istnieje i przed dbt, i potencjalnie
-ponownie w Gold? To wymusiło regułę "obiekt w Gold tylko jeśli dodaje logikę".
+**Second opinion (ChatGPT):** `dim_`/`fact_` before Gold is not a universal
+anti-pattern (in an interview say "a convention, not a law"), but in this architecture the name
+communicates the wrong boundary. The risk of a rename lies in the object's identity in the catalog, downstream
+dependencies and governance, not in the data. Option C (a separate namespace) is good, but more expensive than
+it seems (the Glue database name in IAM, catalog integration, catalog-linked DB, Spark, dbt).
+The most valuable remark: why does the dimensional model exist both before dbt and, potentially,
+again in Gold? That forced the rule "an object in Gold only if it adds logic".
 
-**Decyzja (ADR-005):** opcja A. Nowe nazwy: `customer`, `product`, `orders`,
-`order_items`, `payments`, `order_status_history`. `dim_`/`fct_` tylko dla martów.
+**Decision (ADR-005):** option A. New names: `customer`, `product`, `orders`,
+`order_items`, `payments`, `order_status_history`. `dim_`/`fct_` only for marts.
 
-**Wykonanie (Claude Code, Plan Mode, ręczna akceptacja edycji):** plan przejrzany
-zawczasu (jar `iceberg-spark-runtime-3.5_2.12-1.9.1` z `GlueCatalog.renameTable`
-i `RegisterTableProcedure`, PySpark 3.5.5). Snapshot przed → pilotaż na `dim_product`
-(bez polityk) → pozostałe 5 po jednej z kontrolą → snapshot po. Wynik 6/6:
+**Execution (Claude Code, Plan Mode, manual edit approval):** the plan reviewed
+in advance (jar `iceberg-spark-runtime-3.5_2.12-1.9.1` with `GlueCatalog.renameTable`
+and `RegisterTableProcedure`, PySpark 3.5.5). A snapshot before → a pilot on `dim_product`
+(no policies) → the remaining 5 one by one with a check → a snapshot after. Result 6/6:
 `customer` 51, `product` 30, `orders` 200, `order_items` 502, `payments` 160,
-`order_status_history` 493 wiersze; `metadata_location` i ścieżki S3 identyczne.
-Fallback `register_table` niepotrzebny, żadnego `DROP`. Kod zaktualizowany (tylko nazwy
-tabel): `merge_dimensions.py`, `merge_facts.py`, `schema.yml`, 6 × `stg_*.sql`; grep starych
-nazw pusty; `dbt ls` = 6 modeli / 6 źródeł / 17 testów.
+`order_status_history` 493 rows; `metadata_location` and S3 paths identical.
+The `register_table` fallback not needed, no `DROP`. Code updated (only table
+names): `merge_dimensions.py`, `merge_facts.py`, `schema.yml`, 6 × `stg_*.sql`; a grep for the old
+names empty; `dbt ls` = 6 models / 6 sources / 17 tests.
 
-**Własne poprawki w trakcie:** (1) mój pierwszy prompt kazał robić rename przez
-boto3/CLI, a Glue nie ma natywnego renamu (Iceberg robi create+drop wpisu w katalogu),
-właściwa droga to Spark; (2) twierdziłem, że polityki masking/RLS "podążą" za tabelą,
-to było zgadywanie: Snowflake widzi rename jako nowy obiekt, polityki trzeba założyć
-ponownie (Claude Code doszedł do tego samego niezależnie).
+**My own corrections along the way:** (1) my first prompt said to do the rename via
+boto3/CLI, but Glue has no native rename (Iceberg does a create+drop of the catalog entry);
+the right way is Spark; (2) I claimed that the masking/RLS policies would "follow" the table —
+that was guessing: Snowflake sees a rename as a new object, the policies have to be applied
+again (Claude Code reached the same conclusion independently).
 
-**Potwierdzone przez użytkownika po renamie (bez zachowanego outputu):** Snowflake
-(synchronizacja catalog-linked DB, granty, ponowne założenie masking/RLS na `customer`)
-oraz `dbt run --select staging` i `dbt test --select staging` przeszły poprawnie.
-Konkretne liczby (oczekiwane PASS=6 i PASS=17) i wynik testu ról nie zostały
-zachowane, więc zapis opiera się na deklaracji użytkownika, nie na wklejonym wyniku.
+**Confirmed by the user after the rename (output not preserved):** Snowflake
+(syncing the catalog-linked DB, grants, re-applying masking/RLS on `customer`)
+and `dbt run --select staging` and `dbt test --select staging` passed correctly.
+The specific numbers (expected PASS=6 and PASS=17) and the role test result were not
+preserved, so this record relies on the user's statement, not on a pasted result.
 
-**Znany koszt:** katalogi S3 zachowały stare nazwy (`.../dim_customer/`); przyszła
-tabela utworzona pod starą nazwą w domyślnej lokalizacji trafiłaby do tego samego
-katalogu. Świadomie przyjęte.
+**A known cost:** the S3 directories kept the old names (`.../dim_customer/`); a future
+table created under the old name in the default location would land in the same
+directory. Deliberately accepted.
 
-## 22. Faza 5 — external volume Gold gotowy
+## 22. Phase 5 — external volume for Gold ready
 
-**Zrobione (ten sam dwuetapowy wzorzec co Faza 4, teraz z zapisem):** IAM policy
+**Done (the same two-step pattern as Phase 4, now with writes):** IAM policy
 `snowflake-s3-gold-write` (`PutObject`/`GetObject`/`GetObjectVersion`/`DeleteObject`/
-`DeleteObjectVersion` na `s3://tp-portfolio-ecommerce-raw/gold/*`, `ListBucket` z
-warunkiem `s3:prefix=gold/*`, `GetBucketLocation` osobno) → rola
-`snowflake-s3-gold-write-role` z własnym external ID (`portfolio_gold_ext_vol_eid`)
+`DeleteObjectVersion` on `s3://tp-portfolio-ecommerce-raw/gold/*`, `ListBucket` with
+the condition `s3:prefix=gold/*`, `GetBucketLocation` separately) → the role
+`snowflake-s3-gold-write-role` with its own external ID (`portfolio_gold_ext_vol_eid`)
 → `CREATE EXTERNAL VOLUME portfolio_gold_ext_vol` (`ALLOW_WRITES = TRUE`,
-`STORAGE_BASE_URL = s3://.../gold/`) → trust policy domknięta na
+`STORAGE_BASE_URL = s3://.../gold/`) → trust policy finished on
 `STORAGE_AWS_IAM_USER_ARN` → `GRANT USAGE ... TO ROLE portfolio_engineer`.
 
-**Weryfikacja:** `SYSTEM$VERIFY_EXTERNAL_VOLUME` → `writeResult`/`readResult`/
-`listResult`/`deleteResult` wszystkie `PASSED` (w odróżnieniu od Fazy 4, gdzie przy
-`ALLOW_WRITES = FALSE` te pola były `UNVERIFIED` — teraz funkcja mogła wykonać pełny
-round-trip). `STORAGE_AWS_IAM_USER_ARN` identyczny jak dla
-`portfolio_ecommerce_ext_vol` z Fazy 4 (`arn:...:user/g6702000-s`) — potwierdza, że
-Snowflake ma jednego wspólnego IAM usera na konto; rozróżnieniem między wolumenami
-jest wyłącznie external ID, nie osobny user.
+**Verification:** `SYSTEM$VERIFY_EXTERNAL_VOLUME` → `writeResult`/`readResult`/
+`listResult`/`deleteResult` all `PASSED` (unlike Phase 4, where with
+`ALLOW_WRITES = FALSE` these fields were `UNVERIFIED` — now the function could perform a full
+round-trip). `STORAGE_AWS_IAM_USER_ARN` identical to that of
+`portfolio_ecommerce_ext_vol` from Phase 4 (`arn:...:user/g6702000-s`) — confirming that
+Snowflake has one shared IAM user per account; the only distinction between the volumes
+is the external ID, not a separate user.
 
-**Napotkany błąd:** `CREATE EXTERNAL VOLUME` → "SYSADMIN must have CREATE EXTERNAL
-VOLUME granted" — aktywna rola w Worksheecie była `SYSADMIN`, nie `ACCOUNTADMIN`;
-naprawa: `USE ROLE ACCOUNTADMIN`.
+**Error encountered:** `CREATE EXTERNAL VOLUME` → "SYSADMIN must have CREATE EXTERNAL
+VOLUME granted" — the active role in the Worksheet was `SYSADMIN`, not `ACCOUNTADMIN`;
+fix: `USE ROLE ACCOUNTADMIN`.
 
-**Pytania/odpowiedzi:** dlaczego osobna rola IAM per wolumen zamiast jednej (zakres
-uprawnień jest różny — read-only na całym buckecie vs read-write tylko na `gold/`;
-wspólna rola musiałaby sumować oba, łamiąc least privilege), co to jest ARN.
+**Questions/answers:** why a separate IAM role per volume instead of one (the scope
+of permissions differs — read-only on the whole bucket vs read-write only on `gold/`;
+a shared role would have to add up both, breaking least privilege), what an ARN is.
 
-**Status:** infrastruktura pod Gold kompletna. Następny krok: Sesja 2 Claude Code —
-pierwszy mart (`fct_customer_revenue`, Snowflake-managed Iceberg, `CATALOG =
-'SNOWFLAKE'`, ten external volume), point-in-time join do SCD2, potem Codex review.
-
----
-
-**Sprostowanie (Great Expectations):** w rozmowie podałem błędnie, że Great Expectations
-jest zrobione w Fazie 2. Faktycznie Faza 2 to własny skrypt `validate.py` (kod bez frameworka, napisany w rozmowie z Claude, jak reszta Faz 1-4, zob. ADR-003)
-(schemat, not-null, unikalność PK w batchu, accepted values, kwarantanna w
-`quarantine/`), a GE jest świadomie odłożony jako zakres Advanced (sekcja 8 tego
-dziennika i docstring w `validate.py`). ADR-002 nadal wymienia GE jako plan, więc przy
-zmianie jego statusu z Proposed na Accepted dopisać, że ten etap wdrożono jako
-`validate.py`. `CLAUDE.md` i cheat sheet skorygowane.
-
-**Pytania/odpowiedzi (teoria przeniesiona do cheat sheeta, 15.1.2 i 25.9):** po co
-staging (DRY: "posprzątaj raz, użyj wszędzie"), Bronze/Silver/Gold to etykiety
-warstw danych, a staging/marts to podział pracy wewnątrz dbt, czym jest mart
-(odpowiedź na pytanie biznesowe łącząca kilka staging; "5-10 martów" = tyle, ile
-pytań), testy generic vs custom, `target/compiled` vs `target/run`, prosty przykład
-"ile wydał każdy klient", dbt w cyklu życia pipeline'u (nie jednorazowy setup:
-`dbt run`/`dbt test` odpalane przy każdym cyklu danych, docelowo z Airflow i CI),
-mapowanie warstw w projekcie (cheat sheet 25.10).
-
-**Status:** rename w Glue, w kodzie i w Snowflake zakończony i zweryfikowany
-(część Snowflake/dbt: deklaracja użytkownika). Następny krok: drugi
-external volume (`ALLOW_WRITES = TRUE`) i Sesja 2 (marty, w tym pierwszy
-`fct_customer_revenue` z point-in-time joinem do SCD2).
+**Status:** the infrastructure for Gold is complete. Next step: Claude Code session 2 —
+the first mart (`fct_customer_revenue`, Snowflake-managed Iceberg, `CATALOG =
+'SNOWFLAKE'`, this external volume), a point-in-time join to SCD2, then a Codex review.
 
 ---
 
-## 23. Faza 5 — naprawa dat SCD2 w `customer`, porządek w repo
+**Correction (Great Expectations):** in the conversation I wrongly stated that Great Expectations
+was done in Phase 2. In fact Phase 2 is our own `validate.py` script (code without a framework, written in the conversation with Claude, like the rest of Phases 1-4, see ADR-003)
+(schema, not-null, PK uniqueness within the batch, accepted values, quarantine in
+`quarantine/`), and GE is deliberately postponed as Advanced scope (section 8 of this
+log and the docstring in `validate.py`). ADR-002 still lists GE as the plan, so when
+changing its status from Proposed to Accepted, add that this stage was implemented as
+`validate.py`. `CLAUDE.md` and the cheat sheet corrected.
 
-**Wykrycie:** przed pierwszym martem zapytanie kontrolne (zamówienia wcześniejsze
-niż pierwsza wersja klienta) dało 200/200. Diagnoza: wszystkie `valid_from`
-klientów w jednym 15-minutowym oknie 26.09, a produkty rozrzucone na 24 dni.
-Przyczyna: klienci załadowani wczesną wersją skryptu, która brała czas
-przetwarzania zamiast `source.updated_at`. Późniejsza poprawka kodu nie ruszyła
-istniejących wersji, bo MERGE ich nie odwiedza. Ten sam błąd był na granicy
-wersji klienta 5 (luka ~6 min bez ważnej wersji). Błąd był niewidoczny, dopóki
-nic nie czytało tych dat. Wyszedł dopiero przy planowaniu point-in-time joinu.
+**Questions/answers (theory moved to the cheat sheet, 15.1.2 and 25.9):** why
+staging (DRY: "clean up once, use everywhere"), Bronze/Silver/Gold are labels of data
+layers, while staging/marts is a division of work inside dbt, what a mart is
+(an answer to a business question combining several staging models; "5-10 marts" = as many as there are
+questions), generic vs custom tests, `target/compiled` vs `target/run`, a simple example
+"how much did each customer spend", dbt in the pipeline's life cycle (not a one-off setup:
+`dbt run`/`dbt test` run on every data cycle, eventually from Airflow and CI),
+mapping the layers in the project (cheat sheet 25.10).
 
-**Sprostowanie do sekcji 10:** jedna partycja `dim_customer` w Athenie nie
-wynikała z „testów SCD2 robionych dzisiaj”, tylko z tego błędu.
+**Status:** the rename in Glue, in the code and in Snowflake completed and verified
+(the Snowflake/dbt part: the user's statement). Next step: the second
+external volume (`ALLOW_WRITES = TRUE`) and session 2 (marts, including the first
+`fct_customer_revenue` with a point-in-time join to SCD2).
 
-**Naprawa (Claude Code, Spark):** MERGE tylko z UPDATE: pierwsze `valid_from` :=
-`MIN(created_at)` z surowych plików S3, a granica wersji klienta 5 := `updated_at`
-zdarzenia zmiany. Pilot na kliencie 5, potem 49 pozostałych. Weryfikacja: 51
-wierszy / 50 klientów / 50 bieżących bez zmian, hashe atrybutów bez zmian,
-wersje ciągłe, ponowne uruchomienie nic nie zmienia. Snapshot
-`5434959617553012471` → `6395697598619178545` (rollback możliwy). Skrypt i stany
-przed/po w `scripts/repairs/2026-09-29_customer_valid_from/`.
+---
 
-**Weryfikacja w Snowflake:** `valid_from` od 2026-06-22 do 2026-09-26.
-Zapytanie kontrolne: 115 (rzeczywisty efekt losowych, niezależnych dat w
-`seed.py`; obsłuży go reguła w dbt). Masking i RLS przetrwały UPDATE (w
-odróżnieniu od renamu): `portfolio_analyst` widzi tylko `DE` i `***@`.
+## 23. Phase 5 — repairing the SCD2 dates in `customer`, tidying up the repo
+
+**Detection:** before the first mart, a control query (orders earlier
+than the customer's first version) gave 200/200. Diagnosis: all customers' `valid_from`
+values fell within one 15-minute window on 26.09, while products were spread over 24 days.
+Cause: the customers were loaded with an early version of the script that took the processing
+time instead of `source.updated_at`. A later code fix didn't touch the
+existing versions, because the MERGE doesn't visit them. The same error was at the boundary between
+versions of customer 5 (a ~6 min gap without a valid version). The error was invisible as long as
+nothing read these dates. It only came out when planning the point-in-time join.
+
+**Correction to section 10:** the single `dim_customer` partition in Athena did not
+come from "SCD2 tests done today", but from this error.
+
+**Fix (Claude Code, Spark):** a MERGE with UPDATE only: the first `valid_from` :=
+`MIN(created_at)` from the raw S3 files, and the version boundary of customer 5 := the `updated_at`
+of the change event. A pilot on customer 5, then the remaining 49. Verification: 51
+rows / 50 customers / 50 current unchanged, attribute hashes unchanged,
+contiguous versions, re-running changes nothing. Snapshot
+`5434959617553012471` → `6395697598619178545` (rollback possible). The script and the states
+before/after in `scripts/repairs/2026-09-29_customer_valid_from/`.
+
+**Verification in Snowflake:** `valid_from` from 2026-06-22 to 2026-09-26.
+Control query: 115 (the real effect of the random, independent dates in
+`seed.py`; a rule in dbt will handle it). Masking and RLS survived the UPDATE (unlike
+the rename): `portfolio_analyst` sees only `DE` and `***@`.
 `dbt test --select staging` → PASS=17.
 
-**Porządek w repo:** okazało się, że Fazy 1–5 (Spark, dbt, ADR-y, `validate.py`,
-`github_extract.py`, `CLAUDE.md`, ten log) nigdy nie były zacommitowane. 6
-branchy z `main` (5 z 6 branchy budowanych na tymczasowym
-indeksie, bez ruszania katalogu roboczego), test konfliktów dla wszystkich 15 par, PR-y #1–#6 ze squash merge.
-Cheat sheet i plik debugowy zostają lokalnie (`.gitignore`). `gh` zalogowany
-osobno, bez tokena pipeline'u (`GITHUB_TOKEN` z `.env` trafił do środowiska
-shella; token do ekstrakcji nie powinien mieć prawa zapisu do repo).
+**Tidying up the repo:** it turned out that Phases 1–5 (Spark, dbt, ADRs, `validate.py`,
+`github_extract.py`, `CLAUDE.md`, this log) had never been committed. 6
+branches from `main` (5 of the 6 branches built on a temporary
+index, without touching the working directory), a conflict test for all 15 pairs, PRs #1–#6 with squash merge.
+The cheat sheet and a debug file stay local (`.gitignore`). `gh` logged in
+separately, without the pipeline's token (`GITHUB_TOKEN` from `.env` had ended up in the
+shell environment; a token for extraction shouldn't have write access to the repo).
 
-**Status:** Silver poprawny, repo kompletne na `main`. Następny krok: Sesja 2 —
-pierwszy mart.
+**Status:** Silver correct, the repo complete on `main`. Next step: session 2 —
+the first mart.
 
 ---
 
-## 24. Faza 5 — Sesja 2: pierwszy mart `fct_orders` (Gold, Snowflake-managed Iceberg)
+## 24. Phase 5 — session 2: the first mart `fct_orders` (Gold, Snowflake-managed Iceberg)
 
-**Zrobione (Claude Code, Plan Mode, ręczna akceptacja):**
-- `catalogs.yml` (v1, stabilny; v2 w dbt 1.12 eksperymentalny) z katalogiem
-  `gold_iceberg` → `CATALOG = 'SNOWFLAKE'`, `portfolio_gold_ext_vol`. Tabela
-  ląduje w `s3://.../gold/_dbt/dbt_dev_marts/fct_orders/`.
-- Staging `stg_customers`/`stg_products` zwraca teraz WSZYSTKIE wersje SCD2
-  (bez filtra `is_current`). Unikalność na `(klucz, valid_from)` przez
-  `dbt_utils` 1.4.1 + strażnik „najwyżej jedna wersja bieżąca” (`unique` z
+**Done (Claude Code, Plan Mode, manual approval):**
+- `catalogs.yml` (v1, stable; v2 in dbt 1.12 is experimental) with the catalog
+  `gold_iceberg` → `CATALOG = 'SNOWFLAKE'`, `portfolio_gold_ext_vol`. The table
+  lands in `s3://.../gold/_dbt/dbt_dev_marts/fct_orders/`.
+- Staging `stg_customers`/`stg_products` now returns ALL SCD2 versions
+  (no `is_current` filter). Uniqueness on `(key, valid_from)` via
+  `dbt_utils` 1.4.1 + a guard "at most one current version" (`unique` with
   `where: is_current`).
-- `int_customer_versions`: pierwsza wersja klienta obowiązuje od `1900-01-01`
-  (obsługa 115 zamówień sprzed pierwszej wersji z `seed.py`), połowicznie
-  otwarty przedział `[effective_from, effective_to)`, bez `email` (żadna
-  maskowana kolumna nie trafia do Gold).
-- `fct_orders` (grain: zamówienie): `country_at_order` (point-in-time) i
-  `current_country`, `gross_order_value`, `paid_amount` (tylko `completed`),
+- `int_customer_versions`: a customer's first version is effective from `1900-01-01`
+  (handling the 115 orders placed before the first version from `seed.py`), a half-
+  open interval `[effective_from, effective_to)`, without `email` (no
+  masked column reaches Gold).
+- `fct_orders` (grain: order): `country_at_order` (point-in-time) and
+  `current_country`, `gross_order_value`, `paid_amount` (only `completed`),
   `refunded_amount`, `is_before_first_customer_version`.
-- Testy: m.in. ciągłość wersji (granica n = początek n+1, łapie klasę błędu z
-  §23), „dokładnie jedna wersja klienta na zamówienie”, uzgodnienie sumy
-  `gross_order_value` ze stagingiem.
+- Tests: among others version contiguity (boundary n = start of n+1, catches the class of error from
+  §23), "exactly one customer version per order", reconciliation of the sum of
+  `gross_order_value` with staging.
 
-**Napotkany błąd (przewidziany w planie):** Iceberg w Snowflake odrzuca
-`TIMESTAMP_NTZ(9)` (domyślna precyzja Snowflake, nanosekundy) — format Iceberg
-przechowuje maksymalnie mikrosekundy. Naprawa: `::TIMESTAMP_NTZ(6)` na
-`order_date`. Bez utraty danych, bo źródło i tak ma precyzję 6.
+**Error encountered (anticipated in the plan):** Iceberg in Snowflake rejects
+`TIMESTAMP_NTZ(9)` (Snowflake's default precision, nanoseconds) — the Iceberg format
+stores at most microseconds. Fix: `::TIMESTAMP_NTZ(6)` on
+`order_date`. No data loss, because the source has precision 6 anyway.
 
-**Governance:** RLS (`country_rls` na `country_at_order`) i maska przez
-`post_hook` (tabela jest odtwarzana przy każdym `dbt run`, więc ręczny `ALTER`
-by przepadł), granty przez config `grants`. Kolejność w materializacji:
-CREATE OR REPLACE → post_hooki → granty, więc analityk nigdy nie dostaje
-SELECT na tabelę bez polityk. Celowo bez `copy_grants`.
+**Governance:** RLS (`country_rls` on `country_at_order`) and a mask via a
+`post_hook` (the table is recreated on every `dbt run`, so a manual `ALTER`
+would be lost), grants via the `grants` config. The order in the materialisation:
+CREATE OR REPLACE → post_hooks → grants, so the analyst never gets
+SELECT on a table without the policies. Deliberately without `copy_grants`.
 
-**Codex review (3 findingi):**
-- P1, przyjęty: `current_country` ujawniał kraj spoza zakresu RLS (analityk
-  widzi zamówienie z DE, ale też kraj, do którego klient się przeniósł). RLS
-  filtruje wiersze, nie chroni innych kolumn w tych wierszach. Naprawa: nowa
-  maska `country_mask` na `current_country` (analityk widzi tylko `DE`, inaczej
+**Codex review (3 findings):**
+- P1, accepted: `current_country` revealed a country outside the RLS scope (the analyst
+  sees an order from DE, but also the country the customer moved to). RLS
+  filters rows, it doesn't protect other columns in those rows. Fix: a new
+  mask `country_mask` on `current_country` (the analyst sees only `DE`, otherwise
   NULL).
-- P2, przyjęty: `paid_amount` nie odróżniał zwrotu od braku wpłaty → dodany
-  `refunded_amount`, poprawiony opis.
-- P2, zamknięty bez zmian: `SHOW GRANTS TO ROLE portfolio_analyst` — brak
-  dostępu do stagingu i intermediate.
+- P2, accepted: `paid_amount` didn't distinguish a refund from no payment → added
+  `refunded_amount`, corrected the description.
+- P2, closed without changes: `SHOW GRANTS TO ROLE portfolio_analyst` — no
+  access to staging or intermediate.
 
-**Wynik końcowy:** `dbt run` 200 wierszy, testy 34/34 (cały łańcuch) i 13/13
-(mart po poprawkach). Inżynier: 200 zamówień, 115 sprzed pierwszej wersji
-klienta, 44 kraje, 0 NULL. Analityk: 10 zamówień, tylko DE. `POLICY_REFERENCES`
-potwierdza obie polityki na tabeli. Ścieżka maski zwracająca NULL nie ma
-przykładu w danych (żaden klient nie przeniósł się z DE) — zweryfikowane
-tylko podpięcie polityki.
+**Final result:** `dbt run` 200 rows, tests 34/34 (the whole chain) and 13/13
+(the mart after the fixes). Engineer: 200 orders, 115 before the customer's first
+version, 44 countries, 0 NULLs. Analyst: 10 orders, only DE. `POLICY_REFERENCES`
+confirms both policies on the table. The mask path returning NULL has no
+example in the data (no customer moved away from DE) — only the attachment of the
+policy was verified.
 
-**Ręczne obiekty w Snowflake (poza dbt):** `country_mask` + APPLY dla
-`portfolio_engineer`, APPLY na `country_rls`, USAGE na `portfolio_governance`
-dla inżyniera, USAGE na `portfolio_dbt` i `dbt_dev_marts` dla analityka.
-Zapisane w `snowflake/phase5_gold_governance.sql`.
+**Manual objects in Snowflake (outside dbt):** `country_mask` + APPLY for
+`portfolio_engineer`, APPLY on `country_rls`, USAGE on `portfolio_governance`
+for the engineer, USAGE on `portfolio_dbt` and `dbt_dev_marts` for the analyst.
+Recorded in `snowflake/phase5_gold_governance.sql`.
 
-**Status:** PR #8 (`1add7cd`). Pierwszy mart w Gold działa end-to-end.
-
----
-
-## 25. Porządek w S3: ścieżki tabel Iceberg zgodne z nazwami
-
-**Trigger:** po ADR-005 tabele nazywały się `customer`, `orders` itd., ale w S3
-leżały w `dim_customer/`, `fact_orders/`. Uznane za bałagan, naprawione przed
-Fazą 6, żeby Airflow od początku działał na ostatecznym układzie. Zmiana
-decyzji z ADR-005 (dopisana tam sekcja „Aktualizacja”).
-
-**Metoda (Claude Code, Plan Mode):** `rewrite_table_path` + kopia plików S3 +
-`register_table` w tymczasowej bazie Glue `portfolio_ecommerce_relocation`
-(niewidoczna dla Snowflake: rola catalog integration ma dostęp tylko do
-`portfolio_ecommerce`, potwierdzone `SHOW SCHEMAS`) + zamiana dwoma renamami.
-CTAS odrzucony, bo gubi historię snapshotów. Pilot `product`, potem
-`order_items`, `order_status_history`, `payments`, `orders`, na końcu
-`customer` z odciętym na czas zamiany dostępem analityka.
-
-**Weryfikacja:** dla każdej tabeli wiersze, hash zawartości, snapshoty i time
-travel identyczne, zmienia się tylko lokalizacja. `customer`: 10 snapshotów,
-punkt rollbacku z §23 nadal działa. W Snowflake po każdej zamianie
-`ALTER ICEBERG TABLE ... REFRESH` (bez niego Snowflake dalej czytał stare
-metadane), obie role, `dbt build` 51/51.
-
-**Odkrycie:** polityki na `customer` przetrwały, bo nazwa się nie zmieniła.
-Rename (§21) gubił polityki, przeniesienie plików z `REFRESH` ich nie gubi.
-Doprecyzowane w `CLAUDE.md` (decyzja 6).
-
-**Błędy po drodze:**
-- `rewrite_table_path` zapisuje listę plików przez warstwę Hadoopa, a w
-  kontenerze brakowało `hadoop-aws`. Złapane przez pilota przed jakimkolwiek
-  zapisem. Pierwszy wpis w `ai/failure-log/` (ADR-003).
-- Przy okazji wyszło, że widok `stg_products` w Snowflake był sprzed Sesji 2:
-  `dbt run --select +fct_orders` nie buduje modeli spoza łańcucha martu.
-  Wniosek: po zmianach w kilku modelach pełny `dbt build`.
-
-**Sprzątanie:** usunięte wpisy `*_old_path` i baza tymczasowa w Glue, 685
-obiektów w S3 (stare katalogi i `migration-staging/`, bucket bez wersjonowania,
-więc nieodwracalnie). Przed usunięciem sprawdzone, że żadna tabela nie wskazuje
-na stare katalogi. PR #10.
+**Status:** PR #8 (`1add7cd`). The first mart in Gold works end to end.
 
 ---
 
-## 26. Faza 6 — start (Airflow): obraz i compose, okno ekstrakcji, oba skrypty extract
+## 25. Tidying up S3: Iceberg table paths matching the names
 
-**Ograniczenie czasowe:** trial Snowflake kończy się ~27.10. Faza 6 prawie nie
-zużywa kredytów (warehouse pracuje tylko w tasku dbt), więc limitem jest czas.
-Kroki 6.1–6.3 nie dotykają Snowflake.
+**Trigger:** after ADR-005 the tables were called `customer`, `orders` etc., but in S3
+they sat in `dim_customer/`, `fact_orders/`. Considered a mess, fixed before
+Phase 6, so that Airflow works on the final layout from the start. A change of the
+decision from ADR-005 (an "Update" section added there).
 
-**Plan Fazy 6:** 6.1 obraz Airflow → 6.2 docker-compose (montowanie `scripts/` i
-`dbt_portfolio/`, sekrety z `.env`, `docker.sock`, nazwany obraz Sparka) → 6.3
-refaktor skryptów (config z env vars, okno `--start/--end`) → 6.4 DAG
+**Method (Claude Code, Plan Mode):** `rewrite_table_path` + a copy of the S3 files +
+`register_table` in a temporary Glue database `portfolio_ecommerce_relocation`
+(invisible to Snowflake: the catalog integration role only has access to
+`portfolio_ecommerce`, confirmed with `SHOW SCHEMAS`) + a swap via two renames.
+CTAS rejected, because it loses the snapshot history. Pilot `product`, then
+`order_items`, `order_status_history`, `payments`, `orders`, and finally
+`customer` with the analyst's access cut off for the time of the swap.
+
+**Verification:** for every table the rows, content hash, snapshots and time
+travel identical, only the location changes. `customer`: 10 snapshots,
+the rollback point from §23 still works. In Snowflake, after every swap
+`ALTER ICEBERG TABLE ... REFRESH` (without it Snowflake kept reading the old
+metadata), both roles, `dbt build` 51/51.
+
+**Finding:** the policies on `customer` survived, because the name didn't change.
+A rename (§21) lost the policies; moving the files with `REFRESH` doesn't lose them.
+Clarified in `CLAUDE.md` (decision 6).
+
+**Errors along the way:**
+- `rewrite_table_path` writes the list of files through the Hadoop layer, and the
+  container lacked `hadoop-aws`. Caught by the pilot before any
+  write. The first entry in `ai/failure-log/` (ADR-003).
+- Along the way it turned out that the `stg_products` view in Snowflake predated session 2:
+  `dbt run --select +fct_orders` doesn't build models outside the mart's chain.
+  Conclusion: after changes to several models, a full `dbt build`.
+
+**Cleanup:** removed the `*_old_path` entries and the temporary database in Glue, 685
+objects in S3 (the old directories and `migration-staging/`; the bucket has no versioning,
+so irreversibly). Before deleting, checked that no table points
+to the old directories. PR #10.
+
+---
+
+## 26. Phase 6 — start (Airflow): image and compose, extraction window, both extract scripts
+
+**Time constraint:** the Snowflake trial ends around 27.10. Phase 6 uses almost no
+credits (the warehouse only works in the dbt task), so time is the limit.
+Steps 6.1–6.3 don't touch Snowflake.
+
+**Phase 6 plan:** 6.1 Airflow image → 6.2 docker-compose (mounting `scripts/` and
+`dbt_portfolio/`, secrets from `.env`, `docker.sock`, a named Spark image) → 6.3
+refactoring the scripts (config from env vars, a `--start/--end` window) → 6.4 the DAG
 `ecommerce_pipeline` (`[extract_postgres, extract_github]` → `validate` →
-`merge_dimensions` → `merge_facts` → `dbt build`) → 6.5 retry z exponential
-backoff, `execution_timeout`, `on_failure_callback` → 6.6 backfill na 3 dniach →
-6.7 dokumentacja.
+`merge_dimensions` → `merge_facts` → `dbt build`) → 6.5 retries with exponential
+backoff, `execution_timeout`, `on_failure_callback` → 6.6 a backfill over 3 days →
+6.7 documentation.
 
-**Decyzje architektoniczne:**
-- **Spark poza obrazem Airflow.** Obraz `spark-iceberg` ma już Javę i JAR-y
-  Iceberga/AWS. Airflow uruchamia go jako chwilowy kontener przez
-  `DockerOperator` (dependency isolation), zamiast kopiować JVM i JAR-y do
-  obrazu Airflow. Pierwotny pomysł „rozszerzyć obraz Airflow o PySpark z
-  Icebergiem” odrzucony po przeczytaniu `spark-docker/Dockerfile`.
-- **dbt w osobnym venv w obrazie Airflow** (`/opt/airflow/dbt_venv`), bo dbt i
-  Airflow pinują sprzeczne wersje wspólnych bibliotek.
-- **Okno ekstrakcji = data interval z 10-minutową zakładką, bez stanu
-  watermarku → ADR-006.** Zmienia plan z docstringu `extract.py` (§5:
-  „watermark przejdzie do Airflow Variables”). Uzasadnienie: idempotentne runy,
-  backfill bez ręcznego cofania stanu, historia okien w `dag_run`. Zakładka
-  zamyka lukę „późnego commitu” (`now()` w Postgresie = start transakcji).
-  Duplikaty z zakładki zjada istniejąca deduplikacja przed `MERGE`.
+**Architectural decisions:**
+- **Spark outside the Airflow image.** The `spark-iceberg` image already has Java and the
+  Iceberg/AWS JARs. Airflow runs it as a temporary container through
+  `DockerOperator` (dependency isolation), instead of copying the JVM and the JARs into the
+  Airflow image. The original idea "extend the Airflow image with PySpark with
+  Iceberg" was rejected after reading `spark-docker/Dockerfile`.
+- **dbt in a separate venv in the Airflow image** (`/opt/airflow/dbt_venv`), because dbt and
+  Airflow pin conflicting versions of shared libraries.
+- **Extraction window = data interval with a 10-minute lookback, no watermark
+  state → ADR-006.** It changes the plan from the `extract.py` docstring (§5:
+  "the watermark will move to Airflow Variables"). Justification: idempotent runs,
+  backfill without manually rewinding state, the history of windows in `dag_run`. The lookback
+  closes the "late commit" gap (`now()` in Postgres = transaction start).
+  Duplicates from the lookback are absorbed by the existing deduplication before `MERGE`.
 
-**Zrobione (6.1):** `airflow-docker/Dockerfile` (`apache/airflow:2.9.0-python3.12`,
-providery z oficjalnym constraints file, dbt-core 1.12.5 + dbt-snowflake 1.12.1 w
-osobnym venv) i `requirements.txt` (providery docker/amazon/postgres bez
-pinów, wersje z constraints). Weryfikacja: build 51 s,
+**Done (6.1):** `airflow-docker/Dockerfile` (`apache/airflow:2.9.0-python3.12`,
+providers with the official constraints file, dbt-core 1.12.5 + dbt-snowflake 1.12.1 in a
+separate venv) and `requirements.txt` (the docker/amazon/postgres providers without
+pins, versions from the constraints). Verification: build 51 s,
 `apache-airflow-providers-docker 3.9.2`, `dbt --version` → core 1.12.5, snowflake
-1.12.1. `BrokenPipeError` w outpucie to efekt `| head -2`, nie błąd.
+1.12.1. The `BrokenPipeError` in the output is an effect of `| head -2`, not an error.
 
-**Pytania z tego kroku i czego uczą** (teoria: cheat sheet 31.1–31.4):
-- **Plan mówił „rozszerzamy PySpark o Iceberg/AWS” — co to znaczy?** Spark sam
-  nie umie czytać Icebergu ani rozmawiać z Glue/S3; potrzebuje dodatkowych
-  JAR-ów (`iceberg-spark-runtime`, `iceberg-aws-bundle`). „Rozszerzyć” = wbudować
-  je w obraz przy buildzie, zamiast kazać Sparkowi pobierać je z Mavena przy
-  każdym uruchomieniu (`spark.jars.packages`). Nasz obraz Sparka już je ma,
-  dlatego Spark nie trafił do obrazu Airflow.
-- **Czy okno ekstrakcji i jego historia będą w Airflow Variables?** Nie. Airflow
-  sam wylicza okno każdego runu z `schedule` i `start_date`
-  (`data_interval_start/end`), a historia runów z ich oknami jest w bazie
-  metadanych (`dag_run`). Variables zostają na konfigurację, nie na stan.
-- **Jak zrobić backfill z zakładką — podać `-s` o 5 minut wcześniej?** Nie.
-  `-s/-e` w `airflow dags backfill` wybierają, KTÓRE dni (runy) wykonać;
-  zakładkę (10 min wstecz) dolicza sam task w szablonie komendy, więc każdy run
-  backfillu dostaje ją automatycznie.
+**Questions from this step and what they teach** (theory: cheat sheet 31.1–31.4):
+- **The plan said "we extend PySpark with Iceberg/AWS" — what does that mean?** Spark by
+  itself can't read Iceberg or talk to Glue/S3; it needs additional
+  JARs (`iceberg-spark-runtime`, `iceberg-aws-bundle`). "Extend" = build
+  them into the image at build time, instead of making Spark download them from Maven on
+  every run (`spark.jars.packages`). Our Spark image already has them,
+  which is why Spark didn't end up in the Airflow image.
+- **Will the extraction window and its history be in Airflow Variables?** No. Airflow
+  computes each run's window itself from the `schedule` and `start_date`
+  (`data_interval_start/end`), and the history of runs with their windows is in the
+  metadata database (`dag_run`). Variables stay for configuration, not for state.
+- **How do I do a backfill with a lookback — pass `-s` 5 minutes earlier?** No.
+  `-s/-e` in `airflow dags backfill` choose WHICH days (runs) to execute;
+  the lookback (10 min back) is added by the task itself in the command template, so every
+  backfill run gets it automatically.
 
-**Zrobione (6.2, 8.10):** `docker-compose.yml`: wspólne zmienne Airflow
-(`POSTGRES_SOURCE_HOST=postgres-source`, klucze AWS z `.env`, `AWS_REGION` i
-`AWS_DEFAULT_REGION`, `GITHUB_TOKEN`, `HOST_PROJECT_DIR=${PWD}` dla ścieżek
-montowania w `DockerOperator`), montowanie `scripts/` i `dbt_portfolio/` w
-webserverze i schedulerze, `docker.sock` w schedulerze (LocalExecutor wykonuje
-taski w nim), stała nazwa obrazu Sparka `portfolio-spark:latest`.
+**Done (6.2, 8.10):** `docker-compose.yml`: shared Airflow variables
+(`POSTGRES_SOURCE_HOST=postgres-source`, AWS keys from `.env`, `AWS_REGION` and
+`AWS_DEFAULT_REGION`, `GITHUB_TOKEN`, `HOST_PROJECT_DIR=${PWD}` for the mount
+paths in `DockerOperator`), mounting `scripts/` and `dbt_portfolio/` in the
+webserver and the scheduler, `docker.sock` in the scheduler (LocalExecutor executes
+tasks in it), a fixed Spark image name `portfolio-spark:latest`.
 
-**Zrobione (6.3, część 1, 8.10):** `extract.py` na `--start/--end` (okno
-`[start, end)`, daty bez strefy = UTC, walidacja start < end), config z env vars
-z obecnymi wartościami jako domyślnymi, bez pliku stanu. Test tym samym oknem
-(8.10) w dwóch środowiskach: z Maca (`uv run`) i z kontenera Airflow (`docker
-compose run`): oba 0 wierszy bez błędów, `docker.from_env().ping()` → `True`.
-Dwa uruchomienia celowo: Mac sprawdza logikę kodu, kontener sprawdza otoczenie
-(sieć, sekrety, pakiety z obrazu, montowanie). Zapis do S3 nie został jeszcze
-sprawdzony z kontenera (0 wierszy = brak `put_object`).
+**Done (6.3, part 1, 8.10):** `extract.py` on `--start/--end` (window
+`[start, end)`, dates without a time zone = UTC, validation start < end), config from env vars
+with the current values as defaults, no state file. A test with the same window
+(8.10) in two environments: from the Mac (`uv run`) and from the Airflow container (`docker
+compose run`): both 0 rows without errors, `docker.from_env().ping()` → `True`.
+Two runs on purpose: the Mac checks the code's logic, the container checks the surroundings
+(network, secrets, packages from the image, mounts). Writing to S3 has not been
+checked from the container yet (0 rows = no `put_object`).
 
-**Odkryte 20.10 (po przerwie w pracy):** `docker compose ps -a` pokazał
-`airflow-webserver` w stanie `Exited (1)` od 29.09 i scheduler na obrazie
-oznaczonym samym `sha256:...`.
-- Webserver: padły workery gunicorna (`Some workers seem to have died`, `No
-  response from gunicorn master within 120 seconds`), najpewniej brak pamięci w
-  Docker Desktop albo uśpienie Maca. Serwisy nie mają `restart:`, więc leżał 3
-  tygodnie niezauważony.
-- Scheduler: przebudowa obrazu 7.10 przepięła nazwę na nowy obraz, a działający
-  kontener został na starym (Docker nie podmienia obrazu w działającym
-  kontenerze). Nie widział więc montowań, zmiennych ani `docker.sock` z 6.2;
-  test z 8.10 przeszedł tylko dlatego, że `docker compose run` startuje świeżą
-  kopię.
-- Naprawa: `docker compose up -d --build` (wolumeny Postgresów nietknięte).
-  Weryfikacja na działającym schedulerze: widzi `scripts/` i `dbt_portfolio/`,
-  `ping()` → `True`; webserver stabilny po kilku minutach.
+**Discovered 20.10 (after a break in the work):** `docker compose ps -a` showed
+`airflow-webserver` in the state `Exited (1)` since 29.09 and the scheduler on an image
+labelled only with `sha256:...`.
+- Webserver: the gunicorn workers died (`Some workers seem to have died`, `No
+  response from gunicorn master within 120 seconds`), most likely lack of memory in
+  Docker Desktop or the Mac going to sleep. The services have no `restart:`, so it lay dead for 3
+  weeks unnoticed.
+- Scheduler: the image rebuild on 7.10 moved the name to the new image, and the running
+  container stayed on the old one (Docker doesn't swap the image in a running
+  container). So it didn't see the mounts, variables or `docker.sock` from 6.2;
+  the 8.10 test passed only because `docker compose run` starts a fresh
+  copy.
+- Fix: `docker compose up -d --build` (the Postgres volumes untouched).
+  Verification on the running scheduler: it sees `scripts/` and `dbt_portfolio/`,
+  `ping()` → `True`; the webserver stable after a few minutes.
 
-**Pytania z tych kroków i czego uczą** (teoria: cheat sheet 31.5–31.7):
-- **Po co `.env`, skoro `boto3` sam znajduje klucze?** `boto3` szuka
-  poświadczeń po kolei: zmienne środowiskowe → `~/.aws/credentials` → rola IAM
-  maszyny. Na Macu trafia w `~/.aws`, ale kontener nie widzi Twojego `~/.aws`,
-  więc `.env` wkłada klucze do zmiennych kontenera. W korporacji kluczy nie ma
-  wcale: serwer/pod dostaje rolę IAM i `boto3` trafia w nią (krok 3).
-- **Skoro skrypt robi tylko `import`, skąd biorą się pakiety?** `import` ładuje
-  pakiet z Pythona, który uruchamia skrypt, a nie go instaluje. Na Macu to
-  `.venv` (z `uv.lock`), w kontenerze obraz Airflow (`requirements.txt`, pisany
-  ręcznie, wersje z constraints Airflow). Ten sam kod, dwie instalacje, więc
-  test w obu miejscach: Mac sprawdza logikę, kontener otoczenie (sieć, sekrety,
-  pakiety, montowanie). W korporacji jedno źródło prawdy: obraz budowany w CI.
-- **`airflow-init` miał być jednorazowy, a uruchamia się przy każdym `up` — czy
-  jest potrzebny?** Jest krótkotrwały, nie jednorazowy: przy każdym starcie
-  sprawdza/migruje schemat bazy Airflow i kończy pracę; realną robotę
-  (założenie bazy, użytkownika) zrobił raz. Zostaje jako bramka: webserver i
-  scheduler czekają, aż skończy się sukcesem.
-- **Dlaczego `spark-iceberg` działa cały czas?** Ma komendę `tail -f /dev/null`
-  (nic nie robi, ale się nie kończy), a `up` startuje wszystkie serwisy. Odkąd
-  Spark uruchamia `DockerOperator` w chwilowych kontenerach, stały kontener
-  jest potrzebny tylko do ręcznej pracy.
-- **Dlaczego `docker compose` nie działa w innym folderze, a `docker ps` tak?**
-  `docker compose` szuka `docker-compose.yml` w bieżącym folderze (i wyżej), a
-  nazwa projektu pochodzi od nazwy folderu; `docker ps` pyta silnik Dockera
-  bezpośrednio o wszystkie kontenery. Spoza repo: `-f <plik>` albo `-p
+**Questions from these steps and what they teach** (theory: cheat sheet 31.5–31.7):
+- **Why `.env`, if `boto3` finds the keys by itself?** `boto3` looks for
+  credentials in order: environment variables → `~/.aws/credentials` → the machine's IAM
+  role. On the Mac it hits `~/.aws`, but the container doesn't see your `~/.aws`,
+  so `.env` puts the keys into the container's variables. In a corporation there are no keys
+  at all: the server/pod gets an IAM role and `boto3` hits that (step 3).
+- **If the script only does `import`, where do the packages come from?** `import` loads
+  a package from the Python that runs the script; it doesn't install it. On the Mac that's
+  `.venv` (from `uv.lock`), in the container the Airflow image (`requirements.txt`, written
+  by hand, versions from the Airflow constraints). The same code, two installations, hence
+  the test in both places: the Mac checks the logic, the container the surroundings (network, secrets,
+  packages, mounts). In a corporation there is one source of truth: an image built in CI.
+- **`airflow-init` was meant to be one-off, but it runs on every `up` — is it
+  needed?** It is short-lived, not one-off: on every start it
+  checks/migrates the Airflow database schema and exits; the real work
+  (creating the database, the user) it did once. It stays as a gate: the webserver and
+  scheduler wait until it finishes successfully.
+- **Why is `spark-iceberg` running all the time?** It has the command `tail -f /dev/null`
+  (it does nothing, but never ends), and `up` starts all services. Since
+  Spark is run by `DockerOperator` in temporary containers, the permanent container
+  is only needed for manual work.
+- **Why doesn't `docker compose` work in another folder, while `docker ps` does?**
+  `docker compose` looks for `docker-compose.yml` in the current folder (and above), and
+  the project name comes from the folder name; `docker ps` asks the Docker engine
+  directly about all containers. From outside the repo: `-f <file>` or `-p
   portfolio-project`.
-- **Lekcja z 20.10:** przebudowa obrazu nie podmienia go w działającym
-  kontenerze (trzeba `up -d --build`), a serwis bez `restart:` po awarii leży
-  niezauważony.
+- **The lesson from 20.10:** rebuilding an image doesn't swap it in a running
+  container (you need `up -d --build`), and a service without `restart:` lies dead after a failure
+  unnoticed.
 
-**Plan do końca triala Snowflake (27.10; stan 20.10: $368 z $400, więc
-limitem jest czas, nie kredyty):** 20–21.10 `github_extract.py` + DAG bez dbt →
-22–23.10 task dbt i pierwszy pełny run → 24–25.10 retry, alert, backfill → 26.10
-zebranie dowodów (zrzuty Airflow/Snowflake, wyniki dbt, README), bo po 27.10
-kroku dbt na Snowflake nie da się już pokazać na żywo.
+**Plan until the end of the Snowflake trial (27.10; state on 20.10: $368 of $400, so
+time is the limit, not credits):** 20–21.10 `github_extract.py` + the DAG without dbt →
+22–23.10 the dbt task and the first full run → 24–25.10 retries, alert, backfill → 26.10
+collecting evidence (Airflow/Snowflake screenshots, dbt results, README), because after 27.10
+the dbt step on Snowflake can no longer be shown live.
 
-**Zrobione 21.10:** PR #12 (`331777c`, squash merge w UI): obraz Airflow,
-compose, `extract.py`, ADR-006, `CLAUDE.md`. Po merge'u lokalne sprzątanie:
-`git switch main && git pull`, `git branch -D` (duże `-D`, bo po squash merge
-git nie rozpoznaje gałęzi jako zmergowanej), `git fetch --prune` usunął 11
-nieaktualnych remote-tracking branches po PR #1–#11, `git push origin --delete`
-dla gałęzi #12. Zostały tylko `main` i `origin/main`.
+**Done 21.10:** PR #12 (`331777c`, squash merge in the UI): the Airflow image,
+compose, `extract.py`, ADR-006, `CLAUDE.md`. After the merge, local cleanup:
+`git switch main && git pull`, `git branch -D` (capital `-D`, because after a squash merge
+git doesn't recognise the branch as merged), `git fetch --prune` removed 11
+stale remote-tracking branches after PRs #1–#11, `git push origin --delete`
+for the #12 branch. Only `main` and `origin/main` remained.
 
-**Zrobione (6.3, część 2, 21.10):** `github_extract.py` na `--start/--end`
-według ADR-006: `issues` z `since=start` po stronie serwera i `< end` po
-stronie klienta (okno sprzed 2008 pomija `since`, bo przy epoce GitHub zwraca
-pusty wynik); `pull_requests` od najnowszych: pomija nowsze od okna, zbiera
-okno, kończy na pierwszym starszym, a przy wyczerpaniu limitu 20 stron przed
-dojściem do początku okna wypisuje ostrzeżenie zamiast cicho zwrócić niepełne
-dane; `repositories` i `contributors` jako pełny snapshot; bez pliku stanu.
-Logika okna PR-ów sprawdzona na danych testowych przed uruchomieniem.
-Test na żywo z działającego schedulera, okno 20.10: repositories 1,
-issues 1, pull_requests 177 (strona 1 = PR-y zmienione 21.10, pominięte;
-strony 2–4 okno; bez ostrzeżenia o limicie), contributors 410. **Pierwszy
-zapis do S3 z kontenera Airflow** (klucze z `.env` działają). Tylko 1 issue,
-bo API zwraca bieżący stan: obiekt zmieniony 20.10 i ponownie 21.10 trafia do
-okna 21.10 (ograniczenie opisane w ADR-006). Dane z GitHuba zostają w raw,
-`merge_*` przetwarzają tylko tabele z Postgresa (uproszczenie z fazy 1).
+**Done (6.3, part 2, 21.10):** `github_extract.py` on `--start/--end`
+according to ADR-006: `issues` with `since=start` server-side and `< end`
+client-side (a window before 2008 skips `since`, because with the epoch GitHub returns
+an empty result); `pull_requests` newest first: skips those newer than the window, collects the
+window, stops at the first older one, and when the 20-page limit is exhausted before
+reaching the start of the window it prints a warning instead of silently returning incomplete
+data; `repositories` and `contributors` as a full snapshot; no state file.
+The PR window logic checked on test data before running.
+Live test from the running scheduler, window 20.10: repositories 1,
+issues 1, pull_requests 177 (page 1 = PRs changed on 21.10, skipped;
+pages 2–4 the window; no limit warning), contributors 410. **The first
+write to S3 from the Airflow container** (the keys from `.env` work). Only 1 issue,
+because the API returns the current state: an object changed on 20.10 and again on 21.10 lands in
+the 21.10 window (a limitation described in ADR-006). The GitHub data stays in raw;
+`merge_*` process only the Postgres tables (a simplification from phase 1).
 
-**Błąd w dokumentacji (mój):** aktualizacje z 20.10 (§26 i cheat sheet
-31.5–31.7) zgłosiłem jako zapisane w repo, ale do repo trafiły wersje z 7.10.
-Pliki zapisywałem pod tą samą ścieżką tymczasową co 7.10 i przy zapisie poszła
-stara kopia. Wykryte 21.10 po rozmiarach plików, naprawione 21.10 z
-weryfikacją treści w repo. Wniosek: po każdym zapisie sprawdzać treść, nie
-tylko komunikat o sukcesie.
+**Documentation error (mine):** the updates from 20.10 (§26 and cheat sheet
+31.5–31.7) I reported as saved in the repo, but the versions from 7.10 reached the repo.
+I was saving the files under the same temporary path as on 7.10, and on saving the
+old copy went in. Detected on 21.10 by the file sizes, fixed on 21.10 with
+verification of the content in the repo. Conclusion: after every write check the content, not
+just the success message.
 
-**Pytania z tego kroku i czego uczą** (teoria: cheat sheet 12.12, 15.3.1):
-- **Zrobiłem squash merge w UI — co dalej w terminalu, i `switch` czy
-  `checkout`?** Lokalny git nie wie o merge'u z GitHuba: `git switch main && git
-  pull` (pobiera squash commit), potem usuwasz gałąź `git branch -D` (duże D,
-  bo po squash git nie rozpozna jej jako zmergowanej). `switch` robi to samo co
-  `checkout` przy gałęziach, ale `checkout` umie też nadpisywać pliki, więc
-  `switch` jest bezpieczniejszy.
-- **`fetch`, `pull`, `prune` — czym się różnią i skąd stare gałęzie
-  `origin/*`?** `fetch` pobiera stan GitHuba do kopii `origin/*` (remote-tracking
-  branches), nie ruszając Twoich plików; `pull` = `fetch` + scalenie do bieżącej
-  gałęzi. Gałęzie usunięte na GitHubie zostają lokalnie jako `origin/*`, dopóki
-  nie zrobisz `git fetch --prune`; u nas usunęło to 11 starych po PR #1–#11.
-- **Zwykle robi to gotowy konektor — dlaczego własny skrypt, i co to dlt?**
-  Wybór to rachunek kosztu UTRZYMANIA, nie napisania (AI obniża tylko ten
-  drugi): Fivetran/Airbyte przy wielu standardowych źródłach (płacisz za
-  wiersze, nie piszesz kodu), dlt (biblioteka Pythona: paginacja, stan,
-  schemat za Ciebie) gdy chcesz kod bez pisania infrastruktury, własny skrypt
-  przy nietypowym źródle albo gdy celem jest pokazanie mechaniki, jak tutaj.
-  dlt to nie DLT (Delta Live Tables w Databricks, transformacje).
-- **Dlaczego więc nie dlt teraz?** Schowałby paginację i okna, które portfolio
-  ma pokazać, a przed końcem triala nie ma czasu. Po 27.10: GitHub na dlt obok
-  skryptu i porównanie w ADR-007.
+**Questions from this step and what they teach** (theory: cheat sheet 12.12, 15.3.1):
+- **I did a squash merge in the UI — what next in the terminal, and `switch` or
+  `checkout`?** Local git doesn't know about the merge on GitHub: `git switch main && git
+  pull` (fetches the squash commit), then you delete the branch with `git branch -D` (capital D,
+  because after a squash git won't recognise it as merged). `switch` does the same as
+  `checkout` for branches, but `checkout` can also overwrite files, so
+  `switch` is safer.
+- **`fetch`, `pull`, `prune` — how do they differ, and where do the old `origin/*`
+  branches come from?** `fetch` downloads GitHub's state into the `origin/*` copies (remote-tracking
+  branches) without touching your files; `pull` = `fetch` + merging into the current
+  branch. Branches deleted on GitHub stay locally as `origin/*` until
+  you run `git fetch --prune`; for us it removed 11 old ones after PRs #1–#11.
+- **Usually a ready-made connector does this — why our own script, and what is dlt?**
+  The choice is a calculation of the cost of MAINTENANCE, not of writing (AI only lowers the
+  latter): Fivetran/Airbyte with many standard sources (you pay per
+  row, you don't write code), dlt (a Python library: pagination, state,
+  schema done for you) when you want code without writing infrastructure, your own script
+  for an unusual source or when the goal is to show the mechanics, as here.
+  dlt is not DLT (Delta Live Tables in Databricks, transformations).
+- **Then why not dlt now?** It would hide the pagination and windows that the portfolio
+  is meant to show, and there is no time before the end of the trial. After 27.10: GitHub on dlt next to
+  the script and a comparison in ADR-007.
 
-**Zrobione (6.4, część 1, 21.10): DAG `dags/ecommerce_pipeline.py` bez dbt.**
+**Done (6.4, part 1, 21.10): DAG `dags/ecommerce_pipeline.py` without dbt.**
 ```
 extract_postgres ──> has_new_rows ──> validate_raw ──> merge_dimensions ──> merge_facts
-extract_github   (równolegle, kończy się na raw)
+extract_github   (in parallel, ends in raw)
 ```
-- `extract_*` i `validate_raw` przez `BashOperator` (zależności są w obrazie
-  Airflow), `merge_*` przez `DockerOperator` z obrazu `portfolio-spark:latest`
-  (Java/Spark/Iceberg tylko w obrazie Sparka); montowanie `scripts/` ze ścieżki
-  hosta (`HOST_PROJECT_DIR`), klucze AWS w `private_environment`,
+- `extract_*` and `validate_raw` via `BashOperator` (the dependencies are in the Airflow
+  image), `merge_*` via `DockerOperator` from the image `portfolio-spark:latest`
+  (Java/Spark/Iceberg only in the Spark image); mounting `scripts/` from the host
+  path (`HOST_PROJECT_DIR`), AWS keys in `private_environment`,
   `mount_tmp_dir=False` (Docker Desktop), `auto_remove="success"`.
-- Okna z szablonów Jinja: `extract_postgres` z 10-minutową zakładką,
-  `extract_github` bez (problem `now()` dotyczy tylko Postgresa).
-- `extract_github` bez zależności w dół: `validate.py` i `merge_*` obsługują
-  tylko tabele Postgresa, więc podpięcie pod walidację sugerowałoby
-  nieistniejącą zależność.
-- `@daily`, `start_date` 1.09 (pierwotnie 18.10, zmienione po teście, patrz
-  niżej), `catchup=False`, `max_active_runs=1` (bez nakładających się MERGE na tych
-  samych tabelach Icebergu), `default_args.depends_on_past=True` (dzień N
-  czeka na sukces lub pominięcie dnia N-1; brak cichych dziur).
-- **Bramka jakości:** `validate.py` po sprawdzeniu wszystkich tabel kończy się
-  kodem 1, jeśli cokolwiek trafiło do kwarantanny, więc task pada i `merge_*`
-  się nie uruchamia. Bucket z env var (decyzja 8).
-- **Pierwszy task TaskFlow:** `@task.short_circuit has_new_rows` czyta z XCom
-  ostatnią linię `extract.py` („Done. N rows…”, `BashOperator` sam ją
-  zapisuje); 0 wierszy = wszystko dalej oznaczone jako skipped (bez JVM, po
-  dodaniu dbt także bez kredytów Snowflake). Gdy linii nie da się odczytać,
-  nie pomija (bezpieczniej uruchomić niż zgubić dane).
-- **Znane słabości walidacji (poprawka po 27.10):** `validate.py` sprawdza
-  najnowszy plik tabeli, a nie pliki bieżącego runu (poprawka: ścieżki z
-  extract przez XCom), a `merge_*` czytają cały raw razem z wierszami
-  odrzuconymi (poprawka: pomijanie kwarantanny). Bramka zatrzymuje zły run,
-  ale nie usuwa złych wierszy z późniejszych merge'y.
+- Windows from Jinja templates: `extract_postgres` with a 10-minute lookback,
+  `extract_github` without (the `now()` problem concerns only Postgres).
+- `extract_github` without downstream dependencies: `validate.py` and `merge_*` handle
+  only the Postgres tables, so wiring it into the validation would suggest a
+  non-existent dependency.
+- `@daily`, `start_date` 1.09 (originally 18.10, changed after the test, see
+  below), `catchup=False`, `max_active_runs=1` (no overlapping MERGEs on the
+  same Iceberg tables), `default_args.depends_on_past=True` (day N
+  waits for the success or skip of day N-1; no silent gaps).
+- **Quality gate:** `validate.py`, after checking all tables, exits
+  with code 1 if anything went to quarantine, so the task fails and `merge_*`
+  doesn't run. The bucket from an env var (decision 8).
+- **The first TaskFlow task:** `@task.short_circuit has_new_rows` reads from XCom
+  the last line of `extract.py` ("Done. N rows…", `BashOperator` stores it
+  itself); 0 rows = everything downstream marked as skipped (no JVM, and after
+  adding dbt also no Snowflake credits). When the line can't be read,
+  it doesn't skip (safer to run than to lose data).
+- **Known weaknesses of the validation (fix after 27.10):** `validate.py` checks
+  the table's newest file, not the files of the current run (fix: paths from
+  extract via XCom), and `merge_*` read the whole raw layer including the
+  rejected rows (fix: skipping the quarantine). The gate stops a bad run,
+  but it doesn't remove bad rows from later merges.
 
-**Pytania z przeglądu DAG-a i czego uczą** (teoria: cheat sheet 31.8–31.12, 32):
-- **Dlaczego extract przez `BashOperator`, a merge przez `DockerOperator`?**
-  Operator wybiera się po tym, gdzie kod może działać: extract i walidacja
-  potrzebują tylko bibliotek z obrazu Airflow, merge potrzebuje Javy/Sparka z
-  obrazu Sparka, więc dostaje własny chwilowy kontener. Skrypty nie importują
-  Airflow, więc działają też bez niego.
-- **Co znaczą `SCRIPTS_DIR`, `HOST_PROJECT_DIR`, `SPARK_IMAGE`?** Pierwsza to
-  ścieżka do skryptów WEWNĄTRZ kontenera Airflow (montowanie z compose). Druga to
-  ścieżka repo na Twoim MACU: `DockerOperator` prosi Dockera na Macu o nowy
-  kontener, a ten rozumie tylko ścieżki hosta. Trzecia to nazwa obrazu Sparka.
-- **Dlaczego `{{ data_interval_start }}` w klamrach?** To szablon Jinja. Scheduler
-  czyta plik DAG-a co ~30 s, kiedy żaden run jeszcze nie istnieje; wartości
-  runu wstawia dopiero przy wykonaniu taska. Dlatego też kod na najwyższym
-  poziomie pliku musi być lekki.
-- **Po co `max_active_runs=1` i `depends_on_past=True`?** Pierwsze = jeden run
-  naraz (bez równoległych MERGE na tych samych tabelach Icebergu i kilku JVM na
-  laptopie). Drugie = dzień N czeka na sukces dnia N-1, więc błąd zatrzymuje
-  kolejne dni zamiast zostawić cichą dziurę w danych.
-- **Dlaczego `start_date` 1.09 i czemu test z 13.09 nic nie zrobił?** Data runu
-  przed `start_date` daje run bez tasków (oznaczony jako sukces), a dane seed
-  kończą się 15.09. Plus pułapka: run ręczny dla daty D przetwarza dzień D-1.
-- **Dlaczego `extract_github` nie ma nic po sobie?** Dane z GitHuba lądują tylko
-  w raw (walidacja i merge obsługują tabele Postgresa), a podpięcie go przed
-  walidacją oznaczałoby, że awaria API GitHuba blokuje cały pipeline.
-- **TaskFlow, TaskGroup, XCom — co jest czym, i czy przenieść skrypty na
-  `@task`?** TaskFlow to sposób pisania taska (`@task` na funkcji), TaskGroup to
-  folder w UI, XCom to mały schowek w bazie Airflow na wartości między taskami.
-  Skrypty zostają skryptami: Spark i tak musi iść w swoim kontenerze, dane płyną
-  przez S3, a `@task` zostaje do decyzji orkiestracji (decyzja 9).
-- **Kiedy `has_new_rows` zwróci `False` i czemu „nie umiem odczytać” daje
-  `True`?** `False` tylko przy 0 wierszy (wtedy reszta jest skipped, nie
-  failed). Gdy linii nie da się odczytać, przepuszcza: niepotrzebny run kosztuje
-  minutę Sparka, a niepotrzebne pominięcie to ciche zgubienie danych
+**Questions from the DAG review and what they teach** (theory: cheat sheet 31.8–31.12, 32):
+- **Why extract via `BashOperator`, but merge via `DockerOperator`?**
+  The operator is chosen by where the code can run: extract and validation
+  need only libraries from the Airflow image, merge needs Java/Spark from the
+  Spark image, so it gets its own temporary container. The scripts don't import
+  Airflow, so they also work without it.
+- **What do `SCRIPTS_DIR`, `HOST_PROJECT_DIR`, `SPARK_IMAGE` mean?** The first is the
+  path to the scripts INSIDE the Airflow container (a mount from compose). The second is
+  the repo path on your MAC: `DockerOperator` asks Docker on the Mac for a new
+  container, and Docker only understands host paths. The third is the name of the Spark image.
+- **Why `{{ data_interval_start }}` in braces?** It is a Jinja template. The scheduler
+  reads the DAG file every ~30 s, when no run exists yet; the run's
+  values are filled in only when the task executes. That is also why the code at the top
+  level of the file must be light.
+- **Why `max_active_runs=1` and `depends_on_past=True`?** The first = one run
+  at a time (no parallel MERGEs on the same Iceberg tables and several JVMs on a
+  laptop). The second = day N waits for the success of day N-1, so an error stops
+  the following days instead of leaving a silent gap in the data.
+- **Why `start_date` 1.09, and why did the test for 13.09 do nothing?** A run date
+  before `start_date` produces a run with no tasks (marked as success), and the seed data
+  ends on 15.09. Plus a trap: a manual run for date D processes day D-1.
+- **Why does `extract_github` have nothing after it?** The GitHub data lands only
+  in raw (validation and merge handle the Postgres tables), and wiring it before
+  the validation would mean that a GitHub API failure blocks the whole pipeline.
+- **TaskFlow, TaskGroup, XCom — which is which, and should the scripts move to
+  `@task`?** TaskFlow is a way of writing a task (`@task` on a function), a TaskGroup is
+  a folder in the UI, XCom is a small store in the Airflow database for values between tasks.
+  The scripts stay scripts: Spark has to run in its own container anyway, data flows
+  through S3, and `@task` stays for orchestration decisions (decision 9).
+- **When does `has_new_rows` return `False`, and why does "I can't read it" give
+  `True`?** `False` only with 0 rows (then the rest is skipped, not
+  failed). When the line can't be read, it lets the run through: an unnecessary run costs
+  a minute of Spark, while an unnecessary skip is a silent loss of data
   (fail-safe).
-- **`pendulum` czy `datetime`, po co funkcja pomocnicza dla `DockerOperator`, co
-  to `GITHUB_REPO`?** Oba typy dat działają, liczy się strefa (`pendulum`, bo
-  Airflow używa go wewnątrz). Funkcja, bo oba taski Sparka dzielą 6 z 8
-  parametrów. `GITHUB_REPO` to publiczne repo, z którego pobieramy dane przez
-  API, ustawiane zmienną środowiskową z wartością domyślną.
-- **Jak czytać komendy testowe (`2>&1 | grep`, `;`, `airflow dags test ...`)?**
-  Logi Airflow idą strumieniem błędów, a `|` przekazuje tylko zwykłe wyjście,
-  więc `2>&1` łączy oba przed filtrem; `;` uruchamia następną komendę zawsze,
-  `&&` tylko po sukcesie. CLI ma budowę program → grupa → komenda → argumenty,
-  jak `git` czy `docker compose`.
-- **Merge commit, squash czy rebase przy PR?** Zostajemy przy squash: jeden PR =
-  jeden commit na `main`, łatwy do cofnięcia (cheat sheet 12.3).
+- **`pendulum` or `datetime`, why a helper function for `DockerOperator`, what is
+  `GITHUB_REPO`?** Both date types work; what matters is the time zone (`pendulum`, because
+  Airflow uses it internally). A function, because both Spark tasks share 6 of 8
+  parameters. `GITHUB_REPO` is the public repo we fetch data from through the
+  API, set by an environment variable with a default value.
+- **How do I read the test commands (`2>&1 | grep`, `;`, `airflow dags test ...`)?**
+  Airflow logs go to the error stream, and `|` passes only the normal output,
+  so `2>&1` merges both before the filter; `;` always runs the next command,
+  `&&` only after a success. The CLI is structured as program → group → command → arguments,
+  like `git` or `docker compose`.
+- **Merge commit, squash or rebase for a PR?** We stay with squash: one PR =
+  one commit on `main`, easy to revert (cheat sheet 12.3).
 
-**Test 21.10, ścieżka bez danych:** `airflow dags list-import-errors` → brak
-błędów. `airflow dags test ecommerce_pipeline 2026-10-20`: `extract_postgres`
-0 wierszy, `extract_github` 580 (to samo okno dzień wcześniej dało 589, bo część
-PR-ów zmieniono ponownie i przeszły do kolejnego okna; ograniczenie z
-ADR-006), `has_new_rows` → `False`, `validate_raw` i `merge_*` pominięte.
+**Test 21.10, the path without data:** `airflow dags list-import-errors` → no
+errors. `airflow dags test ecommerce_pipeline 2026-10-20`: `extract_postgres`
+0 rows, `extract_github` 580 (the same window a day earlier gave 589, because some
+PRs were changed again and moved to the next window; the limitation from
+ADR-006), `has_new_rows` → `False`, `validate_raw` and `merge_*` skipped.
 
-**Dwie pułapki z testu 21.10:**
-- `dags test` z datą 13.09 utworzył run **bez żadnego taska** i oznaczył go
-  jako sukces: data logiczna była przed `start_date` (18.10). Mój błąd
-  projektowy: `start_date` dobrany pod backfill 18–20.10, a dane w
-  `postgres-source` kończą się na 15.09 (seed z przeszłymi datami; najwięcej
-  zmian 11–13.09). Poprawka: `start_date` = 1.09, backfill w 6.6 na 11–13.09.
-- **Okno runu ręcznego jest inne niż runu z harmonogramu.** Harmonogram i
-  `backfill`: data logiczna D = okno `[D, D+1)`. Run ręczny (`dags test`,
-  Trigger w UI): okno `[D-1, D)`, czyli ostatnie zakończone przed D (w logu:
-  `data_interval_start=2026-09-12, data_interval_end=2026-09-13` dla D=13.09).
-  Test „za 20.10” przetwarzał więc w praktyce 19.10. Żeby przetestować 13.09
-  ręcznie, podaje się 14.09.
+**Two traps from the 21.10 test:**
+- `dags test` with the date 13.09 created a run **without any task** and marked it
+  as a success: the logical date was before `start_date` (18.10). My design
+  error: `start_date` was chosen for a backfill of 18–20.10, while the data in
+  `postgres-source` ends on 15.09 (a seed with past dates; most
+  changes on 11–13.09). Fix: `start_date` = 1.09, the backfill in 6.6 on 11–13.09.
+- **A manual run's window differs from a scheduled run's window.** Schedule and
+  `backfill`: logical date D = window `[D, D+1)`. A manual run (`dags test`,
+  Trigger in the UI): window `[D-1, D)`, i.e. the last completed one before D (in the log:
+  `data_interval_start=2026-09-12, data_interval_end=2026-09-13` for D=13.09).
+  So the test "for 20.10" in practice processed 19.10. To test 13.09
+  manually, you pass 14.09.
 
-**Test 21.10, pełny run (okno 13.09):** `airflow dags test
+**Test 21.10, a full run (window 13.09):** `airflow dags test
 ecommerce_pipeline 2026-09-14` → `data_interval` 13.09–14.09.
-`extract_postgres` 26 wierszy (customers 1, products 1, orders 4, order_items
+`extract_postgres` 26 rows (customers 1, products 1, orders 4, order_items
 10, payments 4, order_status_history 7), `has_new_rows` → `True`,
-`validate_raw` 26/26 poprawnych (bramka przepuściła), `merge_dimensions` i
-`merge_facts` w kontenerach Sparka przez `DockerOperator` (~40 s każdy). Iceberg
-po MERGE: customer 51, product 30, orders 200, order_items 502, payments 160,
-order_status_history 493, **identycznie jak przed runem**: wiersze z 13.09 już
-były w Icebergu, MERGE ich nie zdublował (dowód idempotentności). DAG działa
-end-to-end Postgres → S3 → walidacja → Iceberg. Logi zdublowane (log do pliku i
-terminala w `dags test`; `DockerOperator` przekazuje logi kontenera dwa razy).
+`validate_raw` 26/26 valid (the gate let it through), `merge_dimensions` and
+`merge_facts` in Spark containers via `DockerOperator` (~40 s each). Iceberg
+after the MERGE: customer 51, product 30, orders 200, order_items 502, payments 160,
+order_status_history 493, **identical to before the run**: the rows from 13.09 were already
+in Iceberg, and the MERGE didn't duplicate them (proof of idempotency). The DAG works
+end to end Postgres → S3 → validation → Iceberg. Logs duplicated (logging to a file and
+the terminal in `dags test`; `DockerOperator` passes the container's logs twice).
 
-**Git 22.10:** PR #13 zmergowany (DAG). Commit z dokumentacją trafił na
-gałąź już zmergowanego PR (push po merge'u nie tworzy ani nie aktualizuje
-zamkniętego PR), więc przeniesiony `git cherry-pick` na nową gałąź od `main` →
-PR #15. Na przyszłość: dorzucać do PR przed kliknięciem merge.
+**Git 22.10:** PR #13 merged (the DAG). The commit with documentation landed on
+the branch of an already merged PR (a push after the merge neither creates nor updates
+a closed PR), so it was moved with `git cherry-pick` to a new branch from `main` →
+PR #15. For the future: add to the PR before clicking merge.
 
-**Zrobione (6.4b, 22.10): task dbt w DAG-u.**
-- Kontener łączy się ze Snowflake'iem bez żadnego sekretu w repo: szablon
-  `dbt_portfolio/profiles.yml.example` (same `env_var()`) zamontowany jako
-  `profiles.yml`, klucz RSA zamontowany tylko do odczytu ze ścieżki hosta w
-  `.env`; zmienne `DBT_SNOWFLAKE_*` przeniesione do `.env` (wcześniej były tylko w
-  sesji terminala, niewidoczne dla `docker compose` z nowego terminala).
-- Profil ma teraz targety `dev` (`dbt_dev_*`) i `prod` (`dbt_prod_*`);
-  `PIPELINE_ENV` (domyślnie `dev`) wybiera target. TaskGroup `ingest`,
+**Done (6.4b, 22.10): the dbt task in the DAG.**
+- The container connects to Snowflake without any secret in the repo: the template
+  `dbt_portfolio/profiles.yml.example` (only `env_var()`) mounted as
+  `profiles.yml`, the RSA key mounted read-only from the host path in
+  `.env`; the `DBT_SNOWFLAKE_*` variables moved to `.env` (previously they were only in the
+  terminal session, invisible to `docker compose` from a new terminal).
+- The profile now has the targets `dev` (`dbt_dev_*`) and `prod` (`dbt_prod_*`);
+  `PIPELINE_ENV` (default `dev`) chooses the target. TaskGroups `ingest`,
   `spark_merge`, `dbt`.
-- `dbt debug` z kontenera: połączenie OK; `git [ERROR]` nieistotny (git
-  potrzebny tylko do pakietów z repozytoriów git; `dbt_utils` jest z dbt Hub i
-  już zainstalowany).
+- `dbt debug` from the container: connection OK; `git [ERROR]` irrelevant (git is
+  needed only for packages from git repositories; `dbt_utils` is from dbt Hub and
+  already installed).
 
-**Incydent 22.10: Snowflake od 7.10 nie widział zmian w 5 tabelach.**
-- Objaw: pierwszy run z dbt → 7 testów `unique` na stagingu padło
-  (`orders`, `order_items`, `payments`, `customers`, `products`), dbt pominął
-  modele zależne (`SKIP=22`, `fct_orders` nieprzebudowana), task i run
-  failed. Spark w tym samym czasie: 200/502/160/493, bez duplikatów.
-- Diagnoza krok po kroku: (1) brak plików usunięć w Icebergu (tylko pliki
-  danych, copy-on-write), więc nie merge-on-read; (2) Snowflake: „parquet file
-  … `fact_orders/` … inaccessible”, czyli stara ścieżka sprzed §25, usunięta z
-  S3; (3) Glue wskazuje metadane `00005` (22.10), Snowflake `00003` (7.10);
-  (4) `SYSTEM$AUTO_REFRESH_STATUS`: `GENERALIZED_PIPE_STOPPED` od 7.10 11:38 dla 5
-  tabel, `RUNNING` tylko dla `order_status_history` (MERGE tylko dopisuje);
-  przyczyna „invalid file … was found in the Iceberg metadata snapshot”.
-- Mechanizm: `rewrite_table_path` zachował identyfikatory snapshotów, a
-  zmienił ścieżki; Snowflake odświeża przyrostowo po snapshotach i odrzucił
-  plik z nową ścieżką w „znanym” snapshocie. Weryfikacja z §25 objęła Glue i
-  Sparka, nie Snowflake'a.
-- Naprawa: ręczne `REFRESH` zwracało ten sam błąd, więc odtworzenie
-  `portfolio_ecommerce_db` poleceniem z `GET_DDL` (po inwentaryzacji grantów i
-  polityk), potem polityki na `customer`, potem granty (analityk nie miał
-  dostępu bez polityk). Pierwsze uruchomienie bloku z politykami za wcześnie
-  (tabele nie były jeszcze wykryte, `sync_interval_seconds = 30`); błąd
-  zatrzymał też granty, więc bez okna bez polityk.
-- Weryfikacja: Snowflake 51/30/200(200 unikalnych)/502/160/493, metadane
-  `00005`, odświeżanie `RUNNING`; analityk: 2 wiersze, oba DE, e-mail
-  `***@example.org`; ponowny `airflow dags test ecommerce_pipeline 2026-09-14`:
-  wszystkie taski SUCCESS, **dbt `PASS=51 ERROR=0`**.
-- Lekcje: (1) po fizycznym przeniesieniu tabeli sprawdzać każdy silnik, nie
-  tylko katalog, i to przed usunięciem starych plików (ADR-005, aktualizacja
-  2026-10-22; `CLAUDE.md` decyzja 6); (2) ciche zatrzymanie odświeżania nie dało
-  żadnego alertu przez dwa tygodnie, a wyłapały je dopiero testy dbt: kandydat
-  do monitoringu w fazie 9 (np. codzienne sprawdzenie
-  `SYSTEM$AUTO_REFRESH_STATUS` dla wszystkich tabel).
+**Incident 22.10: since 7.10 Snowflake hadn't seen changes in 5 tables.**
+- Symptom: the first run with dbt → 7 `unique` tests on staging failed
+  (`orders`, `order_items`, `payments`, `customers`, `products`), dbt skipped the
+  dependent models (`SKIP=22`, `fct_orders` not rebuilt), the task and the run
+  failed. Spark at the same time: 200/502/160/493, no duplicates.
+- Diagnosis step by step: (1) no delete files in Iceberg (only data
+  files, copy-on-write), so not merge-on-read; (2) Snowflake: "parquet file
+  … `fact_orders/` … inaccessible", i.e. the old path from before §25, deleted from
+  S3; (3) Glue points to metadata `00005` (22.10), Snowflake to `00003` (7.10);
+  (4) `SYSTEM$AUTO_REFRESH_STATUS`: `GENERALIZED_PIPE_STOPPED` since 7.10 11:38 for 5
+  tables, `RUNNING` only for `order_status_history` (the MERGE only appends);
+  the cause "invalid file … was found in the Iceberg metadata snapshot".
+- Mechanism: `rewrite_table_path` kept the snapshot IDs but
+  changed the paths; Snowflake refreshes incrementally by snapshot and rejected a
+  file with a new path in a "known" snapshot. The verification in §25 covered Glue and
+  Spark, not Snowflake.
+- Fix: a manual `REFRESH` returned the same error, so the
+  `portfolio_ecommerce_db` was recreated with the statement from `GET_DDL` (after an inventory of grants and
+  policies), then the policies on `customer`, then the grants (the analyst had no
+  access without the policies). The block with the policies was first run too early
+  (the tables hadn't been discovered yet, `sync_interval_seconds = 30`); the error
+  also stopped the grants, so there was no window without policies.
+- Verification: Snowflake 51/30/200(200 unique)/502/160/493, metadata
+  `00005`, refresh `RUNNING`; analyst: 2 rows, both DE, email
+  `***@example.org`; a repeated `airflow dags test ecommerce_pipeline 2026-09-14`:
+  all tasks SUCCESS, **dbt `PASS=51 ERROR=0`**.
+- Lessons: (1) after physically moving a table, check every engine, not
+  just the catalog, and do it before deleting the old files (ADR-005, update
+  2026-10-22; `CLAUDE.md` decision 6); (2) the silent stop of the refresh gave
+  no alert for two weeks, and only the dbt tests caught it: a candidate
+  for monitoring in phase 9 (e.g. a daily check of
+  `SYSTEM$AUTO_REFRESH_STATUS` for all tables).
 
-**Pytania z tego dnia i czego uczą** (teoria: cheat sheet 12.13, 25.17, 27.3,
+**Questions from this day and what they teach** (theory: cheat sheet 12.13, 25.17, 27.3,
 31.13, 31.14, 32.4, 32.5):
-- **Czym różni się `portfolio_ecommerce_db` (ikona ogniwa) od `portfolio_dbt`, i
-  widok od tabeli?** Pierwsza to catalog-linked database: nic nie przechowuje,
-  pokazuje Icebergi z Glue i odświeża ich metadane. Druga to zwykła baza, w
-  której dbt buduje swoje obiekty. Widok to zapisane zapytanie liczone przy
-  każdym odczycie (przepis), tabela to zapisany wynik (gotowe danie); dlatego
-  widoki staging od razu pokazały duplikaty, gdy Snowflake czytał dwa snapshoty.
-- **Co zatrzymało pipeline i czy `dags test` to próba na sucho?** dbt w ramach
-  `build` pominął modele zależne od złego testu, a Airflow widzi tylko kod
-  wyjścia taska, więc oznaczył task i run jako failed. `dags test` wykonuje
-  wszystko naprawdę (S3, MERGE, Snowflake); bezpieczne tylko dzięki
-  idempotencji.
-- **Co robi test i czy coś zapisuje? Co to RLS i `int_`?** Test to SELECT
-  szukający złych wierszy (0 = PASS), domyślnie nic nie zapisuje. RLS (row
-  access policy) filtruje wiersze zależnie od roli, np. analityk widzi tylko
-  DE. `int_` = intermediate, warstwa pośrednia między stagingiem a martem.
-- **Skąd `PIPELINE_ENV` i jak zrobić dev/prod „jak w korporacji”?** Zmienna z
-  `.env` → compose → kontener; DAG przekazuje ją jako `--target` do dbt
-  (`dbt_dev_*` / `dbt_prod_*`). W korporacji kod jest jeden, a środowiska różnią
-  się plikami konfiguracyjnymi i osobnymi wdrożeniami. Osobny bucket S3 dla
-  prod odłożony do Terraformu (faza 8): prod Icebergu nie da się odbudować z
-  raw, bo merge czytający wszystko naraz zwinąłby historię SCD2.
-- **Dlaczego `git push` nie stworzył PR?** Push tylko wysyła commity; PR tworzy
-  `gh pr create` albo przycisk w UI. Push na gałąź już zmergowanego PR nie trafia
-  nigdzie, więc nowa gałąź od `main` i `git cherry-pick <hash>` (kopiuje jeden
+- **How does `portfolio_ecommerce_db` (a link icon) differ from `portfolio_dbt`, and
+  a view from a table?** The first is a catalog-linked database: it stores nothing,
+  it shows the Iceberg tables from Glue and refreshes their metadata. The second is an ordinary database in
+  which dbt builds its objects. A view is a saved query computed on
+  every read (a recipe), a table is a saved result (a ready dish); that is why the
+  staging views immediately showed duplicates when Snowflake was reading two snapshots.
+- **What stopped the pipeline, and is `dags test` a dry run?** dbt, as part of
+  `build`, skipped the models depending on the bad test, and Airflow sees only the
+  task's exit code, so it marked the task and the run as failed. `dags test` executes
+  everything for real (S3, MERGE, Snowflake); safe only thanks to
+  idempotency.
+- **What does a test do, and does it write anything? What are RLS and `int_`?** A test is a SELECT
+  looking for bad rows (0 = PASS), and by default it writes nothing. RLS (a row
+  access policy) filters rows depending on the role, e.g. the analyst sees only
+  DE. `int_` = intermediate, the layer between staging and a mart.
+- **Where does `PIPELINE_ENV` come from, and how do I do dev/prod "like in a corporation"?** A variable from
+  `.env` → compose → the container; the DAG passes it as `--target` to dbt
+  (`dbt_dev_*` / `dbt_prod_*`). In a corporation there is one codebase, and environments differ
+  by configuration files and separate deployments. A separate S3 bucket for
+  prod postponed until Terraform (phase 8): the prod Iceberg can't be rebuilt from
+  raw, because a merge reading everything at once would collapse the SCD2 history.
+- **Why didn't `git push` create a PR?** A push only sends commits; a PR is created by
+  `gh pr create` or the button in the UI. A push to the branch of an already merged PR goes
+  nowhere, hence a new branch from `main` and `git cherry-pick <hash>` (copies one
   commit).
-- **Po co sumy kontrolne md5 przy zapisie plików?** Suma to odcisk treści
-  pliku: przed zapisem potwierdza, że nikt nie zmienił pliku, po zapisie, że w
-  repo jest naprawdę nowa wersja (lekcja z 20.10).
-- **Komendy `env`, `sed`, `printf >>`, `grep -l`, `diff`, `2>/dev/null`** —
-  użyte do przeniesienia zmiennych `DBT_SNOWFLAKE_*` do `.env` bez wyświetlania
-  wartości (cheat sheet 32.4).
+- **Why md5 checksums when saving files?** A checksum is a fingerprint of the file's
+  content: before saving it confirms that nobody changed the file, after saving that
+  the repo really has the new version (the lesson from 20.10).
+- **The commands `env`, `sed`, `printf >>`, `grep -l`, `diff`, `2>/dev/null`** —
+  used to move the `DBT_SNOWFLAKE_*` variables into `.env` without displaying the
+  values (cheat sheet 32.4).
 
-**Zrobione (22.10): testy dbt rozszerzone** (inspiracja: post z LinkedIn o
-testach dbt; cheat sheet 25.18–25.19).
-- Staging: `relationships` ×5 (każdy klucz obcy ma rodzica),
-  `accepted_values` ×4 (statusy zamówień, metody i statusy płatności),
-  `dbt_utils.expression_is_true` ×4 (`valid_to > valid_from` w SCD2,
-  `quantity > 0 AND unit_price >= 0`, `amount >= 0`), freshness na źródłach
-  `orders` i `payments` (`warn_after` 2 dni, bez `error_after`).
-- `fct_orders`: kwoty nieujemne (error) i „zapłacone + zwrócone ≤ wartość
-  zamówienia” jako `severity: warn` (klient po zwrocie może zapłacić ponownie);
-  `store_failures: true` przy regułach biznesowych.
-- Unit testy: `int_customer_versions` (okna obowiązywania wersji) i
-  `fct_orders` (statusy płatności, zamówienie bez pozycji → 0, kraj w chwili
-  zamówienia LY → FR, flaga `is_before_first_customer_version`).
-- DAG: `dbt.dbt_source_freshness` przed `dbt_build` (tylko ostrzega); w `prod`
-  `dbt build --exclude-resource-type unit_test` (słownik `DBT_BUILD_FLAGS`,
-  do przeniesienia do `config/<env>.yaml`). Cały przepływ w jednej linii
-  zależności.
-- Wynik: `dbt build --target dev` → **`PASS=68 ERROR=0`**, po dodaniu unit
-  testu `fct_orders` `--select fct_orders` → `PASS=18`; freshness `WARN` dla obu
-  źródeł (dane kończą się 15.09, oczekiwane); `list-import-errors` pusto.
-- Moja pomyłka: zakładałem, że reguła „≤ wartość zamówienia” da `WARN` na
-  danych seed; przeszła, bo seed generuje płatności zgodne z wartością
-  zamówień. Komentarz w `schema.yml` poprawiony.
-- Znane ryzyko (do 6.5): dbt startuje zaraz po `merge_facts`, a Snowflake
-  odświeża metadane Iceberga co 30 s, więc może przeczytać poprzedni snapshot.
-  Do rozważenia sensor na wersję metadanych albo `REFRESH` przed dbt.
-- Porządek w cheat sheecie: zdublowany numer 25.16 → „Bazy w Snowflake” to
-  teraz 25.17.
+**Done (22.10): dbt tests extended** (inspiration: a LinkedIn post about
+dbt tests; cheat sheet 25.18–25.19).
+- Staging: `relationships` ×5 (every foreign key has a parent),
+  `accepted_values` ×4 (order statuses, payment methods and statuses),
+  `dbt_utils.expression_is_true` ×4 (`valid_to > valid_from` in SCD2,
+  `quantity > 0 AND unit_price >= 0`, `amount >= 0`), freshness on the sources
+  `orders` and `payments` (`warn_after` 2 days, without `error_after`).
+- `fct_orders`: non-negative amounts (error) and "paid + refunded ≤ order
+  value" as `severity: warn` (a customer can pay again after a refund);
+  `store_failures: true` on the business rules.
+- Unit tests: `int_customer_versions` (the validity windows of versions) and
+  `fct_orders` (payment statuses, an order without line items → 0, the country at the time of
+  the order LY → FR, the flag `is_before_first_customer_version`).
+- DAG: `dbt.dbt_source_freshness` before `dbt_build` (only warns); in `prod`
+  `dbt build --exclude-resource-type unit_test` (a dict `DBT_BUILD_FLAGS`,
+  to be moved to `config/<env>.yaml`). The whole flow in one line of
+  dependencies.
+- Result: `dbt build --target dev` → **`PASS=68 ERROR=0`**, after adding the unit
+  test for `fct_orders`, `--select fct_orders` → `PASS=18`; freshness `WARN` for both
+  sources (the data ends on 15.09, expected); `list-import-errors` empty.
+- My mistake: I assumed that the rule "≤ order value" would give a `WARN` on the
+  seed data; it passed, because the seed generates payments consistent with the order
+  values. The comment in `schema.yml` corrected.
+- Known risk (until 6.5): dbt starts right after `merge_facts`, and Snowflake
+  refreshes the Iceberg metadata every 30 s, so it may read the previous snapshot.
+  To consider: a sensor on the metadata version or a `REFRESH` before dbt.
+- Tidying up the cheat sheet: a duplicated number 25.16 → "Databases in Snowflake" is
+  now 25.17.
 
-**Pytania o testy i DAG i czego uczą** (teoria: cheat sheet 25.18, 25.19, 31.15, 32.6):
-- **Dlaczego zależności w jednej linii i jak czytać DAG?** `a >> b` = b startuje
-  po sukcesie a; czyta się od lewej, a cały przepływ w jednym miejscu jest
-  czytelniejszy niż zależności rozrzucone po pliku. Taski bez nikogo przed sobą
-  (korzenie) startują równolegle.
-- **Po co TaskGroup, skoro `extract_github` nic nie blokuje?** TaskGroup to
-  folder w UI grupujący taski według etapu (ingest / spark_merge / dbt), a nie
-  zależność; `extract_github` jest w ingest, bo to etap pobierania.
-- **Dlaczego testy w dbt, a nie w Airflow, i czy są częścią DAG-a?** dbt zna
-  modele i ich zależności, test leży obok modelu, a `build` pomija tylko to, co
-  zależy od złego modelu; Airflow widzi tylko kod wyjścia. Testy są w DAG-u
-  przez task `dbt_build`; uruchomienia z terminala to sprawdzanie w trakcie
-  pisania.
-- **Dlaczego dane w unit teście są wpisane na sztywno, czy to tylko SCD2, dev
-  czy prod?** Unit test sprawdza logikę SQL na ręcznie dobranych przypadkach
-  brzegowych (jak pytest), więc dane zmieniają się tylko razem z logiką. Dotyczy
-  jednego modelu (u nas SCD2 i `fct_orders`) i działa w dev/CI. Testy danych
-  sprawdzają prawdziwe dane, więc działają wszędzie, także w prod.
-- **Dlaczego „18” przy jednej tabeli i dlaczego komenda jest taka długa?** Jedna
-  komenda, a `--select fct_orders` bierze model z jego testami: budowa, unit
-  test i 16 testów danych. Długość komendy: `docker exec` (dbt i klucz są w
-  kontenerze), `cd` + pełna ścieżka do dbt (osobny venv), `grep` do filtrowania
-  logu. Na co dzień: `docker exec -w <katalog> ...`, a w korporacji dbt lokalnie
-  z venv albo przez Makefile.
+**Questions about the tests and the DAG and what they teach** (theory: cheat sheet 25.18, 25.19, 31.15, 32.6):
+- **Why dependencies in one line, and how do I read a DAG?** `a >> b` = b starts
+  after a succeeds; it reads left to right, and the whole flow in one place is
+  more readable than dependencies scattered around the file. Tasks with nothing before them
+  (roots) start in parallel.
+- **Why a TaskGroup, if `extract_github` blocks nothing?** A TaskGroup is a
+  folder in the UI grouping tasks by stage (ingest / spark_merge / dbt), not a
+  dependency; `extract_github` is in ingest, because it is the fetching stage.
+- **Why tests in dbt, not in Airflow, and are they part of the DAG?** dbt knows the
+  models and their dependencies, a test sits next to the model, and `build` skips only what
+  depends on a bad model; Airflow sees only the exit code. The tests are in the DAG
+  through the `dbt_build` task; runs from the terminal are checks while
+  writing.
+- **Why is the data in a unit test hard-coded, is it only SCD2, dev
+  or prod?** A unit test checks SQL logic on hand-picked edge
+  cases (like pytest), so the data changes only together with the logic. It concerns
+  one model (for us SCD2 and `fct_orders`) and runs in dev/CI. Data tests
+  check real data, so they run everywhere, including prod.
+- **Why "18" for one table, and why is the command so long?** One
+  command, and `--select fct_orders` takes the model with its tests: the build, the unit
+  test and 16 data tests. The length of the command: `docker exec` (dbt and the key are in the
+  container), `cd` + the full path to dbt (a separate venv), `grep` to filter the
+  log. Day to day: `docker exec -w <directory> ...`, and in a corporation dbt locally
+  from a venv or through a Makefile.
 
-**Pytania o CI i stan projektu** (teoria: cheat sheet 31.16):
-- **Jakie „ręczne testy” i dlaczego PR nie odpala `dbt build`?** Ręczne testy to
-  komendy, które uruchamiasz i wklejasz (`dbt build`, `list-import-errors`, `dags
-  test`). Repo nie ma CI: GitHub bez `.github/workflows/` niczego nie uruchamia.
-  W korporacji każdy PR automatycznie przechodzi lint, test importu DAG-ów i
-  `dbt build` zmienionych modeli w schemacie CI, a merge jest zablokowany do
-  zielonych checków. U nas to faza 7.
-- **Ile jeszcze zostało?** Stan 22.10: fazy 0–5 gotowe, faza 6 ok. 70%; dalej 7
-  CI/CD, 8 Terraform, 9 observability. Po 27.10 bez Snowflake'a, więc fazy 7–9
-  na AWS/Spark/Airflow.
+**Questions about CI and the state of the project** (theory: cheat sheet 31.16):
+- **Which "manual tests", and why doesn't a PR run `dbt build`?** Manual tests are
+  commands you run and paste (`dbt build`, `list-import-errors`, `dags
+  test`). The repo has no CI: GitHub without `.github/workflows/` runs nothing.
+  In a corporation every PR automatically goes through lint, a DAG import test and
+  `dbt build` of the changed models in a CI schema, and the merge is blocked until
+  the checks are green. For us that is phase 7.
+- **How much is left?** State on 22.10: phases 0–5 done, phase 6 about 70%; then 7
+  CI/CD, 8 Terraform, 9 observability. After 27.10 without Snowflake, so phases 7–9
+  on AWS/Spark/Airflow.
 
-**Zrobione (22.10): dev i prod jako konfiguracja, dwa wdrożenia.**
-- `config/dev.yaml` i `config/prod.yaml`: tylko to, co się różni (harmonogram:
-  dev 00:00, prod 03:00 UTC, żeby dwa MERGE do tych samych tabel Icebergu nie szły
-  naraz; prod `--exclude-resource-type unit_test`). Target dbt = sam
-  `PIPELINE_ENV`. DAG przy
-  wczytaniu czyta `config/<PIPELINE_ENV>.yaml`; brak pliku = błąd importu, a nie
-  ciche wartości domyślne. W kodzie nie ma żadnego `if prod`.
-- `docker-compose.yml`: `./config` zamontowany tylko do odczytu w Airflow;
-  `PIPELINE_ENV: dev` wpisany na stałe (już nie z `.env`); drugi Airflow w
-  profilu `prod` (własna baza metadanych, init, UI na 8081 oznaczone „PROD”,
-  scheduler, logi w `logs/prod`), startowany tylko przez `docker compose
+**Done (22.10): dev and prod as configuration, two deployments.**
+- `config/dev.yaml` and `config/prod.yaml`: only what differs (the schedule:
+  dev 00:00, prod 03:00 UTC, so that two MERGEs into the same Iceberg tables don't run
+  at once; prod `--exclude-resource-type unit_test`). The dbt target = simply
+  `PIPELINE_ENV`. The DAG, when
+  loaded, reads `config/<PIPELINE_ENV>.yaml`; a missing file = an import error, not
+  silent defaults. There is no `if prod` anywhere in the code.
+- `docker-compose.yml`: `./config` mounted read-only into Airflow;
+  `PIPELINE_ENV: dev` hard-coded (no longer from `.env`); a second Airflow in
+  the `prod` profile (its own metadata database, init, UI on 8081 labelled "PROD",
+  scheduler, logs in `logs/prod`), started only with `docker compose
   --profile prod up -d`.
-- Test: dev `No data found`, harmonogram „At 00:00”; prod `No data found`,
-  „At 03:00” — ten sam plik DAG-a, inne zachowanie wyłącznie z konfiguracji.
-  DAG w prodzie wstrzymany (pauza) do czasu pierwszego runu.
-- Pułapka (23.10): po edycji plików w `config/` oba schedulery zgłosiły
-  `FileNotFoundError: .../pipeline_config/dev.yaml`, choć pliki były na Macu.
-  `ls` w kontenerze pokazał pusty folder (`total 0`): Docker Desktop zgubił
-  widok zamontowanego katalogu. Naprawa: `docker compose --profile prod up -d
-  --force-recreate <serwisy Airflow>`; bazy nietknięte. Dobry znak: brak
-  configu dał głośny błąd importu, nie ciche wartości domyślne. Zasada: po
-  zmianie zamontowanego configu sprawdzić import, a przy błędzie odtworzyć
-  kontenery (w firmie zmiana configu i tak oznacza nowe wdrożenie).
-- Do poprawy: compose zbudował osobny obraz dla każdego serwisu (identyczne,
-  z cache'u). W firmie jeden obraz z jedną wersją idzie na wszystkie
-  środowiska; do zrobienia przez wspólne `image:` w serwisach Airflow.
+- Test: dev `No data found`, schedule "At 00:00"; prod `No data found`,
+  "At 03:00" — the same DAG file, different behaviour purely from configuration.
+  The DAG in prod paused until its first run.
+- A trap (23.10): after editing the files in `config/`, both schedulers reported
+  `FileNotFoundError: .../pipeline_config/dev.yaml`, although the files were on the Mac.
+  `ls` in the container showed an empty folder (`total 0`): Docker Desktop lost
+  its view of the mounted directory. Fix: `docker compose --profile prod up -d
+  --force-recreate <Airflow services>`; the databases untouched. A good sign: the missing
+  config gave a loud import error, not silent defaults. Rule: after
+  changing a mounted config, check the import, and on an error recreate the
+  containers (in a company a config change means a new deployment anyway).
+- To improve: compose built a separate image for every service (identical,
+  from the cache). In a company one image with one version goes to all
+  environments; to be done with a shared `image:` in the Airflow services.
 
-**Pytania o dev/prod i czego uczą** (teoria: cheat sheet 31.17):
-- **Na co się zgodziłem w kolejnych zmianach i co zrobił `docker compose up
-  -d`?** Trzy małe kroki zamiast jednej dużej komendy (wcześniejszą, ze 100
-  liniami konfiguracji naraz, odrzuciłeś, bo nie dało się jej przejrzeć). `up -d`
-  utworzył od nowa tylko kontenery, którym zmieniły się montowania (`Started`),
-  resztę zostawił (`Running`): montowania ustawia się wyłącznie przy tworzeniu
-  kontenera.
-- **Jak prod nadpisze `PIPELINE_ENV: dev`?** Wspólne zmienne są w compose raz,
-  pod kotwicą YAML `&airflow-common-env`. Prod wkleja je (`<<:
-  *airflow-common-env`) i dopisuje swoje; przy powtórzonym kluczu wygrywa
-  późniejszy. Zmieniają się tylko `PIPELINE_ENV` i adres bazy metadanych.
-- **Skąd biorą się zmienne środowiskowe?** Droga zawsze ta sama: źródło
-  (`.env` dla sekretów, stała w compose, `${PWD}` z terminala) → sekcja
-  `environment:` w compose → env procesu w kontenerze → czytelnik (sam Airflow,
-  skrypty przez `os.environ`/`boto3`, dbt przez `env_var()`, DAG, który klucze
-  AWS przekazuje dalej do kontenera Sparka). Pełna tabela w cheat sheecie.
-- **Jak `PIPELINE_ENV` zmienia się z dev na prod?** Nie zmienia się nigdy. Są
-  dwa komplety kontenerów, każdy z wartością wpisaną na stałe od startu; ten sam
-  DAG robi co innego, bo czyta inny plik konfiguracyjny. „Przejście na prod” to
-  uruchomienie drugiego kompletu, a w firmie: ta sama wersja kodu wdrożona przez
-  CI na osobny Airflow.
-- **Dlaczego wyszukiwarka nie znalazła `PIPELINE_ENV=prod`?** Przed dopisaniem
-  proda tej wartości nie było, a składnia zależy od miejsca: w compose (YAML)
-  `PIPELINE_ENV: prod`, w `.env` i w działającym kontenerze `PIPELINE_ENV=...`;
-  `.env` jest w `.gitignore`, więc VS Code go nie przeszukuje.
-- **Czy da się zrobić to jak w firmie?** Bliżej: jeden szablon compose dla
-  Airflowa i plik wartości per środowisko (`env/prod.env`), każde wdrożenie jako
-  osobny projekt (`docker compose -p portfolio-prod --env-file ...`), co wymaga
-  wydzielenia Postgresa-źródła i Sparka do osobnego pliku (kilka godzin). W
-  pełni: dwa Airflowy w chmurze na osobnych kontach (faza 8). Wybrany wariant z
-  profilem, bo trial kończy się 27.10.
-- **Po co osobno `PIPELINE_ENV` i `DBT_TARGET`?** Pierwsza wersja czytała
-  target dbt z configu (`dbt.target`), „na wypadek”, gdyby nazwy środowisk i
-  targetów się rozjechały (np. osobne środowisko CI piszące do targetu `dev`,
-  target per developer). Tu oba mają zawsze te same wartości, więc to była
-  zbędna komplikacja: wycofana, `--target {PIPELINE_ENV}`. Zasada z ADR-ów:
-  nie dodawać złożoności bez realnej potrzeby. Przy okazji: `target: dev` w
-  `profiles.yml` to tylko target domyślny (gdy komenda nie ma `--target`), a
-  `outputs` to lista dostępnych targetów.
-- **Czy dev i prod mają osobny Snowflake / Databricks?** Snowflake: zwykle jedno
-  konto, środowiska rozdzielone bazami, rolami i warehouse'ami (osobne konta
-  głównie przy ostrych regulacjach). Databricks: standardem są osobne
-  workspace'y dla dev i prod w jednym koncie, plus katalogi per środowisko w
-  Unity Catalog. U nas jedna baza `PORTFOLIO_DBT`, schematy `dbt_dev_*` i
+**Questions about dev/prod and what they teach** (theory: cheat sheet 31.17):
+- **What did I agree to in the successive changes, and what did `docker compose up
+  -d` do?** Three small steps instead of one big command (you rejected the earlier one, with 100
+  lines of configuration at once, because it couldn't be reviewed). `up -d`
+  recreated only the containers whose mounts changed (`Started`),
+  and left the rest (`Running`): mounts are set only when a container is
+  created.
+- **How will prod override `PIPELINE_ENV: dev`?** The shared variables are in compose once,
+  under the YAML anchor `&airflow-common-env`. Prod pastes them in (`<<:
+  *airflow-common-env`) and adds its own; with a repeated key the later one
+  wins. Only `PIPELINE_ENV` and the metadata database address change.
+- **Where do environment variables come from?** The route is always the same: the source
+  (`.env` for secrets, a constant in compose, `${PWD}` from the terminal) → the
+  `environment:` section in compose → the env of the process in the container → the reader (Airflow itself,
+  the scripts through `os.environ`/`boto3`, dbt through `env_var()`, the DAG, which passes the AWS
+  keys on to the Spark container). The full table is in the cheat sheet.
+- **How does `PIPELINE_ENV` change from dev to prod?** It never changes. There are
+  two sets of containers, each with the value hard-coded from the start; the same
+  DAG does something different because it reads a different configuration file. "Moving to prod" is
+  starting the second set, and in a company: the same code version deployed by
+  CI to a separate Airflow.
+- **Why didn't the search find `PIPELINE_ENV=prod`?** Before prod was added,
+  that value didn't exist, and the syntax depends on the place: in compose (YAML)
+  `PIPELINE_ENV: prod`, in `.env` and in a running container `PIPELINE_ENV=...`;
+  `.env` is in `.gitignore`, so VS Code doesn't search it.
+- **Can this be done like in a company?** Closer: one compose template for
+  Airflow and a values file per environment (`env/prod.env`), each deployment as a
+  separate project (`docker compose -p portfolio-prod --env-file ...`), which requires
+  moving the source Postgres and Spark into a separate file (a few hours). Fully:
+  two Airflows in the cloud on separate accounts (phase 8). The profile variant was chosen
+  because the trial ends on 27.10.
+- **Why separate `PIPELINE_ENV` and `DBT_TARGET`?** The first version read the
+  dbt target from the config (`dbt.target`), "just in case" the names of environments and
+  targets diverged (e.g. a separate CI environment writing to the `dev` target,
+  a target per developer). Here both always have the same values, so it was an
+  unnecessary complication: withdrawn, `--target {PIPELINE_ENV}`. The rule from the ADRs:
+  don't add complexity without a real need. By the way: `target: dev` in
+  `profiles.yml` is only the default target (when a command has no `--target`), and
+  `outputs` is the list of available targets.
+- **Do dev and prod have a separate Snowflake / Databricks?** Snowflake: usually one
+  account, environments separated by databases, roles and warehouses (separate accounts
+  mainly under strict regulation). Databricks: the standard is separate
+  workspaces for dev and prod within one account, plus catalogs per environment in
+  Unity Catalog. For us one database `PORTFOLIO_DBT`, schemas `dbt_dev_*` and
   `dbt_prod_*`.
-- **Czy to znaczy, że nie udostępniłem folderu kontenerowi?** Nie: montowanie
-  jest w compose, Docker Desktop domyślnie udostępnia cały `/Users`, a o 22:58
-  DAG czytał `dev.yaml` bez błędu. Zawiódł widok w trakcie działania: pliki
-  zmieniłem z innej warstwy niż VS Code i Docker Desktop tego nie zauważył.
-  Rozpoznanie: `ls` w kontenerze pokazuje co innego niż na Macu.
-- **Co robi `--force-recreate`?** Usuwa wskazane kontenery i tworzy nowe z tego
-  samego obrazu i konfiguracji, nawet gdy nic się nie zmieniło (zwykłe `up -d`
-  robi to tylko przy zmianie). Przetrwa wszystko poza kontenerem (wolumeny z
-  bazami, zamontowane foldery); znika tylko to, co zapisano wewnątrz. Firma:
-  restart wdrożenia (`kubectl rollout restart`), kontenery są bezstanowe.
-- **Czy mam osobny scheduler dla dev i prod?** Tak, każde środowisko ma swój
-  komplet: baza metadanych, init, webserver, scheduler (dev bez dopisku, bo
-  był pierwszy; prod z `-prod`). Wspólne są `postgres-source` i
-  `spark-iceberg`. W firmie nazwy się nie mieszają, bo to osobne klastry.
-- **Co to Helm?** Menedżer wdrożeń dla Kubernetesa: chart (szablon całego
-  Airflowa) + `values-dev.yaml`/`values-prod.yaml`; CI robi `helm upgrade` po
-  merge'u. Ten sam pomysł co nasz blok compose + nadpisania proda.
+- **Does this mean I didn't share the folder with the container?** No: the mount
+  is in compose, Docker Desktop shares the whole `/Users` by default, and at 22:58
+  the DAG read `dev.yaml` without an error. What failed was the view during operation: I changed the files
+  from a different layer than VS Code, and Docker Desktop didn't notice.
+  Diagnosis: `ls` in the container shows something different than on the Mac.
+- **What does `--force-recreate` do?** It removes the given containers and creates new ones from the
+  same image and configuration, even when nothing changed (a plain `up -d`
+  does so only on a change). Everything outside the container survives (volumes with
+  databases, mounted folders); only what was written inside disappears. In a company:
+  restarting a deployment (`kubectl rollout restart`); containers are stateless.
+- **Do I have a separate scheduler for dev and prod?** Yes, each environment has its own
+  set: a metadata database, init, webserver, scheduler (dev without a suffix, because it
+  came first; prod with `-prod`). Shared are `postgres-source` and
+  `spark-iceberg`. In a company the names don't mix, because they are separate clusters.
+- **What is Helm?** A deployment manager for Kubernetes: a chart (a template of the whole
+  Airflow) + `values-dev.yaml`/`values-prod.yaml`; CI runs `helm upgrade` after a
+  merge. The same idea as our compose block + the prod overrides.
 
-**Pytania o jakość danych i część Advanced planu (23.10):**
-- **Gdzie jest Great Expectations?** W planie w części Advanced (pozycja 13),
-  jako nadbudowa nad `validate.py` w warstwie raw; w fazie 2 świadomie wybrana
-  lekka własna walidacja. W firmach GE jest dziś rzadszy: gdzie jest dbt,
-  zwykle wystarczają testy dbt (+ `dbt-expectations`, Elementary), Soda jako
-  reguły w YAML-u, GE głównie w pipeline'ach Python/Spark przed warehouse'em.
-- **Co jeszcze jest w Advanced?** 14 Elementary/observability (pokrywa się z
-  fazą 9), 15 porównanie z Databricks w `/experiments/databricks` (Free Edition
-  nie wygasa), 16 rozbudowane governance (częściowo: RLS + maski na `customer`
-  i `fct_orders`; dalej tylko do 27.10).
-- **GE czy testy dbt, czy kilka naraz?** Decyzja: kilka narzędzi na tych samych
-  regułach (klucz, dozwolone statusy, kwota ≥ 0, wolumen), żeby różnice było
-  widać wprost: własny `validate.py` (punkt odniesienia), GE i Soda Core na raw
-  (po 27.10, zamiast samej poprawki `validate.py`), 2–3 testy `dbt-expectations`
-  w Snowflake (przed 27.10, w 6.7). Porównanie w ADR, jak dlt.
-- Pytania kontrolne z planu projektu („co, jeśli pipeline uruchomi się dwa
-  razy?”, „jak zrobić backfill 3 miesięcy?”, „jak wykryć ciche uszkodzenie
-  danych?”) posłużą za szkielet README w 6.7.
+**Questions about data quality and the Advanced part of the plan (23.10):**
+- **Where is Great Expectations?** In the plan, in the Advanced part (item 13),
+  as an extension on top of `validate.py` in the raw layer; in phase 2 a
+  lightweight custom validation was deliberately chosen. In companies GE is rarer today: where there is dbt,
+  dbt tests are usually enough (+ `dbt-expectations`, Elementary), Soda as
+  rules in YAML, GE mainly in Python/Spark pipelines before the warehouse.
+- **What else is in Advanced?** 14 Elementary/observability (overlaps with
+  phase 9), 15 a comparison with Databricks in `/experiments/databricks` (the Free Edition
+  doesn't expire), 16 extended governance (partly done: RLS + masks on `customer`
+  and `fct_orders`; further only until 27.10).
+- **GE or dbt tests, or several at once?** Decision: several tools on the same
+  rules (key, allowed statuses, amount ≥ 0, volume), so that the differences are
+  visible directly: our own `validate.py` (the reference point), GE and Soda Core on raw
+  (after 27.10, instead of just fixing `validate.py`), 2–3 `dbt-expectations` tests
+  in Snowflake (before 27.10, in 6.7). A comparison in an ADR, like dlt.
+- The control questions from the project plan ("what if the pipeline runs
+  twice?", "how do you backfill 3 months?", "how do you detect silent data
+  corruption?") will serve as the skeleton of the README in 6.7.
 
-**Git 23.10:** PR #18 zmergowany za wcześnie (bez usunięcia `target`), drugi
-commit poszedł na gałąź po merge'u (ta sama lekcja co 22.10) → PR #19; dokumentacja
-→ PR #20. Przy #20 konflikt w `PROGRESS_LOG.md`: ten sam fragment zmieniony różnie
-na gałęzi i na `main`, git nie zgaduje, którą wersję wziąć. Rozwiązany w UI
-(„Accept current change”: po stronie `main` fragment był pusty, więc nic nie
-zginęło), kontrola `grep -c "<<<<<<<" PROGRESS_LOG.md` → 0.
+**Git 23.10:** PR #18 merged too early (without removing `target`), the second
+commit went to the branch after the merge (the same lesson as 22.10) → PR #19; documentation
+→ PR #20. In #20 a conflict in `PROGRESS_LOG.md`: the same fragment changed differently
+on the branch and on `main`, and git doesn't guess which version to take. Resolved in the UI
+("Accept current change": on the `main` side the fragment was empty, so nothing was
+lost), check `grep -c "<<<<<<<" PROGRESS_LOG.md` → 0.
 
-**Pytania o Asanę i czego uczą** (teoria: cheat sheet 31.18):
-- **Czy da się wykorzystać Asanę w projekcie?** Tak, w dwóch miejscach. (1) W
-  6.5 jako cel alertów: `on_failure_callback` zakłada zadanie w projekcie „Data
-  incidents” przez API Asany. (2) Po 27.10 jako trzecie źródło danych (zadania,
-  projekty): filtr `modified_since` i API zdarzeń z tokenem synchronizacji to
-  inny wzorzec przyrostowego pobierania niż Postgres i GitHub; dlt ma gotowe
-  źródło Asany, więc to naturalny kandydat do porównania w ADR-007 (GitHub
-  własnym skryptem, Asana przez dlt).
-- **Czy alerty pojawią się w Asanie od razu?** Tak, po ostatecznym błędzie taska
-  (po wszystkich retry) callback wysyła jedno zapytanie `POST /tasks` i zadanie
-  jest w Asanie po kilku sekundach. To przepływ jednostronny (Airflow → Asana),
-  nie synchronizacja. Pierwsza wersja nie zamyka zadania po udanym runie i nie
-  łączy powtórek; kolejne kroki: `on_success_callback` zamykający otwarte
-  zadanie i sprawdzenie „czy otwarte zadanie dla tego taska już istnieje”
-  (wtedy komentarz zamiast nowego zadania). W firmie: Slack/PagerDuty do
-  powiadomień, ticket (Jira/Asana) dla incydentów do rozwiązania.
-- Do zrobienia przez Ciebie: darmowe konto Asana (API jest w planie Personal),
-  projekt „Data incidents”, Personal Access Token; w `.env` `ASANA_TOKEN` i
-  `ASANA_PROJECT_ID` (liczba z adresu projektu). Token nigdy w repo.
+**Questions about Asana and what they teach** (theory: cheat sheet 31.18):
+- **Can Asana be used in the project?** Yes, in two places. (1) In
+  6.5 as the alert target: `on_failure_callback` creates a task in the project "Data
+  incidents" through the Asana API. (2) After 27.10 as a third data source (tasks,
+  projects): the `modified_since` filter and the events API with a sync token are
+  a different incremental fetching pattern than Postgres and GitHub; dlt has a ready
+  Asana source, so it is a natural candidate for the comparison in ADR-007 (GitHub
+  with our own script, Asana through dlt).
+- **Will the alerts appear in Asana immediately?** Yes, after the task's final failure
+  (after all retries) the callback sends one `POST /tasks` request and the task
+  is in Asana within a few seconds. It is a one-way flow (Airflow → Asana),
+  not a synchronisation. The first version doesn't close the task after a successful run and doesn't
+  merge repeats; next steps: an `on_success_callback` closing the open
+  task and a check "does an open task for this task already exist"
+  (then a comment instead of a new task). In a company: Slack/PagerDuty for
+  notifications, a ticket (Jira/Asana) for incidents to resolve.
+- For you to do: a free Asana account (the API is in the Personal plan),
+  the project "Data incidents", a Personal Access Token; in `.env` `ASANA_TOKEN` and
+  `ASANA_PROJECT_ID` (the number from the project's address). The token never in the repo.
 
-**Zrobione (6.5, 23.10): retry z rosnącą przerwą, `execution_timeout`, alert do Asany.**
-- `config/dev.yaml` i `prod.yaml`: blok `retries` (dev: 2 ponowienia, przerwa od
-  30 s, limit 5 min; prod: 3, od 2 min, limit 30 min, bo o 03:00 nikt nie
-  patrzy) i `execution_timeout_minutes` per etap (extract 10, validate 10,
-  spark_merge 15, dbt 20; ok. 5–10× normalnego czasu; w obu środowiskach te
-  same, bo dane są wspólne, w firmie decydowałby wolumen proda).
+**Done (6.5, 23.10): retries with a growing delay, `execution_timeout`, an alert to Asana.**
+- `config/dev.yaml` and `prod.yaml`: a `retries` block (dev: 2 retries, delay from
+  30 s, limit 5 min; prod: 3, from 2 min, limit 30 min, because at 03:00 nobody is
+  watching) and `execution_timeout_minutes` per stage (extract 10, validate 10,
+  spark_merge 15, dbt 20; about 5–10× the normal time; the same in both environments,
+  because the data is shared — in a company prod's volume would decide).
 - DAG: `retries`, `retry_delay`, `retry_exponential_backoff`, `max_retry_delay`
-  i `on_failure_callback` w `default_args` (obejmują każdy task),
-  `execution_timeout` per task. `validate_raw` i `has_new_rows` mają
-  `retries=0`: ich porażka jest deterministyczna (kwarantanna, odczyt XCom),
-  ponowienie dałoby ten sam wynik. Retry jest bezpieczny, bo każdy task jest
-  idempotentny.
-- `dags/alerting/asana.py`: callback woła się raz, po OSTATNIEJ nieudanej próbie
-  (także po timeoucie), i wysyła jedno `POST /tasks` do projektu „Data
-  incidents”: tytuł `[env] dag.task failed (window …)`, w notatce run, okno,
-  link do logu i błąd. Nigdy nie rzuca wyjątku (zasłoniłby oryginalny błąd w
-  logu); brak tokenu = głośny wpis w logu, bez awarii taska.
-  `dags/.airflowignore`: scheduler nie parsuje modułu jako DAG-a.
-- Sekrety: `ASANA_TOKEN` (PAT z prywatnego konta) i `ASANA_PROJECT_ID` (liczba po
-  `/project/` w adresie) w `.env`, przekazane przez compose do obu Airflowów.
+  and `on_failure_callback` in `default_args` (they cover every task),
+  `execution_timeout` per task. `validate_raw` and `has_new_rows` have
+  `retries=0`: their failure is deterministic (quarantine, an XCom read),
+  a retry would give the same result. Retries are safe because every task is
+  idempotent.
+- `dags/alerting/asana.py`: the callback is called once, after the LAST failed attempt
+  (also after a timeout), and sends one `POST /tasks` to the project "Data
+  incidents": the title `[env] dag.task failed (window …)`, in the notes the run, the window,
+  a link to the log and the error. It never raises an exception (that would hide the original error in
+  the log); a missing token = a loud log entry, without failing the task.
+  `dags/.airflowignore`: the scheduler doesn't parse the module as a DAG.
+- Secrets: `ASANA_TOKEN` (a PAT from a private account) and `ASANA_PROJECT_ID` (the number after
+  `/project/` in the address) in `.env`, passed by compose to both Airflows.
 
-**Test na żywo 23.10 (dev, run z harmonogramu, okno 22.10):**
-`docker compose stop postgres-source` jako realistyczny błąd przejściowy (baza
-źródłowa nie odpowiada), bez zmiany kodu.
+**Live test 23.10 (dev, a scheduled run, window 22.10):**
+`docker compose stop postgres-source` as a realistic transient error (the source
+database doesn't respond), without changing code.
 
-| Próba | Start (UTC) | Przerwa | Wynik |
+| Attempt | Start (UTC) | Delay | Result |
 |---|---|---|---|
 | 1 | 18:40:10 | — | `UP_FOR_RETRY` |
-| 2 | 18:40:43 | 33 s (oczekiwane 30–60) | `UP_FOR_RETRY` |
-| 3 | 18:42:32 | 109 s (oczekiwane 60–120) | `FAILED` → zadanie w Asanie po 1 s |
+| 2 | 18:40:43 | 33 s (expected 30–60) | `UP_FOR_RETRY` |
+| 3 | 18:42:32 | 109 s (expected 60–120) | `FAILED` → a task in Asana after 1 s |
 
-Jedno zadanie w Asanie (nie trzy), trafiło do pierwszej sekcji projektu;
-`extract_github` sukces mimo awarii Postgresa, reszta `upstream_failed` (bez
-Sparka i dbt). Okno w logu `2026-10-21T23:50` → `2026-10-23T00:00` (dzień 22.10
-z zakładką). Druga połowa: `docker compose start postgres-source` + `airflow
+One task in Asana (not three), landed in the project's first section;
+`extract_github` succeeded despite the Postgres failure, the rest `upstream_failed` (no
+Spark and dbt). The window in the log `2026-10-21T23:50` → `2026-10-23T00:00` (day 22.10
+with the lookback). The second half: `docker compose start postgres-source` + `airflow
 tasks clear ... -t '^ingest\.extract_postgres$' -d -s 2026-10-22 -e 2026-10-22
--y` → run zielony, `has_new_rows` = False (0 wierszy w oknie 22.10, seed kończy
-się 15.09), reszta `skipped`. Zadanie w Asanie zamknięte ręcznie (pierwsza
-wersja działa tylko w jedną stronę).
+-y` → the run green, `has_new_rows` = False (0 rows in the 22.10 window, the seed ends
+on 15.09), the rest `skipped`. The Asana task closed manually (the first
+version works one way only).
 
-**Odkryte przy teście: zator `depends_on_past` po TaskGroupach.**
-- Objaw: run `scheduled__2026-10-22` od 18:27 w stanie `running`, wszystkie
-  taski bez statusu, przez `max_active_runs=1` blokował kolejne runy. `airflow
-  tasks failed-deps`: „depends_on_past is true …, but the previous task instance
-  has not run yet”.
-- Przyczyna: TaskGroup zmienia `task_id` (`extract_postgres` →
-  `ingest.extract_postgres`). Przy `catchup=False` „poprzedni run” to
-  `manual__2026-10-20` (`dags test` z 21.10, sprzed TaskGroup), który nie ma
-  instancji o nowym ID, więc Airflow czekał bez końca. Na Gridzie widać to w
-  runie 13.09: zielone `has_new_rows`/`validate_raw` (spoza grup), puste `extract_*`.
-- Naprawa: usunięcie z metadanych runu testowego `manual__2026-10-20` (Browse →
-  DAG Runs → Delete; nie `airflow dags delete`, które kasuje całą historię DAG-a).
-  Dane w S3/Iceberg/Snowflake i pliki logów nietknięte. Poprzednim runem stał się
-  `manual__2026-09-14` (powtórzony 22.10 z nowymi ID), scheduler od razu
-  wystartował task.
-- Lekcje: (1) zmiana `task_id`, także przez TaskGroup, zrywa historię taska
-  (`depends_on_past`, czasy trwania); w firmie: nie zmieniać ID w działającym
-  DAG-u (`prefix_group_id=False`) albo przy wdrożeniu świadomie przeciąć historię
-  (jednorazowy run z „Ignore Task Deps”), historii runów na prodzie się nie
-  kasuje (audyt). (2) Zator to cisza, nie porażka, więc alert do Asany go nie
-  łapie; kandydat: `dagrun_timeout` + callback na poziomie DAG-a.
-- Moje błędy: komendy wypisane po przecinku w zdaniu (wklejone do terminala nie
-  zadziałały; od teraz komendy tylko w bloku kodu, w formie do wklejenia) i data
-  z UI (23.10 = koniec okna) zamiast daty logicznej (22.10) w `failed-deps`.
+**Discovered during the test: a `depends_on_past` stall after the TaskGroups.**
+- Symptom: the run `scheduled__2026-10-22` in the `running` state since 18:27, all
+  tasks without a status, and through `max_active_runs=1` it blocked the following runs. `airflow
+  tasks failed-deps`: "depends_on_past is true …, but the previous task instance
+  has not run yet".
+- Cause: a TaskGroup changes the `task_id` (`extract_postgres` →
+  `ingest.extract_postgres`). With `catchup=False` the "previous run" is
+  `manual__2026-10-20` (the `dags test` from 21.10, from before the TaskGroups), which has no
+  instance with the new ID, so Airflow waited forever. On the Grid you can see it in
+  the 13.09 run: green `has_new_rows`/`validate_raw` (outside the groups), empty `extract_*`.
+- Fix: deleting the test run `manual__2026-10-20` from the metadata (Browse →
+  DAG Runs → Delete; not `airflow dags delete`, which wipes the DAG's whole history).
+  The data in S3/Iceberg/Snowflake and the log files untouched. The previous run became
+  `manual__2026-09-14` (re-run on 22.10 with the new IDs), and the scheduler immediately
+  started the task.
+- Lessons: (1) changing a `task_id`, including through a TaskGroup, breaks the task's history
+  (`depends_on_past`, durations); in a company: don't change IDs in a running
+  DAG (`prefix_group_id=False`) or deliberately cut the history at deployment
+  (a one-off run with "Ignore Task Deps"); run history in prod is never
+  deleted (audit). (2) A stall is silence, not a failure, so the Asana alert doesn't
+  catch it; a candidate: `dagrun_timeout` + a DAG-level callback.
+- My mistakes: commands listed with commas in a sentence (pasted into the terminal they didn't
+  work; from now on commands only in a code block, in a pasteable form) and the date
+  from the UI (23.10 = the end of the window) instead of the logical date (22.10) in `failed-deps`.
 
-**Git 23.10:** `git push origin --delete` dla `feat/dbt-tests`,
-`feat/dev-prod-config`, `feat/airflow-dbt-task` → „remote ref does not exist”:
-na GitHubie już ich nie było, zostały tylko lokalne kopie `origin/*`, które
-sprząta dopiero `git fetch --prune`. Lokalne `feat/dbt-tests` usunięte (sprawdzone
-wcześniej, że nic z niego nie brakuje na `main`).
+**Git 23.10:** `git push origin --delete` for `feat/dbt-tests`,
+`feat/dev-prod-config`, `feat/airflow-dbt-task` → "remote ref does not exist":
+they were no longer on GitHub, only the local `origin/*` copies remained, which
+only `git fetch --prune` cleans up. The local `feat/dbt-tests` deleted (checked
+beforehand that nothing from it was missing on `main`).
 
-**Pytania z tego kroku i czego uczą:**
-- **Czy konto w Asanie zakładać na sztuczny mail (np. `PG_ASANA@PG.com`)?** Nie:
-  Asana wymaga potwierdzenia maila, a domena prawdziwej firmy może przypiąć konto
-  do jej organizacji w Asanie i wygląda na podszywanie się. Do portfolio
-  wystarcza PAT z prywatnego konta; osobna tożsamość „bota” = alias Gmaila
+**Questions from this step and what they teach:**
+- **Should the Asana account be created with a fake email (e.g. `PG_ASANA@PG.com`)?** No:
+  Asana requires confirming the email, and a real company's domain can attach the account
+  to that company's organisation in Asana and looks like impersonation. For a portfolio
+  a PAT from a private account is enough; a separate "bot" identity = a Gmail alias
   (`mail+asana-bot@gmail.com`).
-- **Jak to się robi w firmie?** Konto techniczne zakłada IT/admin na wniosek (ticket,
-  właściciel, akceptacja, nazwa typu `svc-data-alerts`). Dwie opcje: service
-  account Asany (plany Enterprise, tworzy super admin, tylko API, ale z pełnymi
-  uprawnieniami widzi wszystkie dane organizacji, więc rzadko dla wąskiej
-  integracji) albo częściej użytkownik integracyjny: prawdziwa skrzynka funkcyjna
-  w domenie firmy, licencja, zaproszenie tylko do jednego projektu, PAT z jego
-  konta (najmniejsze uprawnienia). Token w vaulcie (Key Vault / Secrets Manager /
-  HashiCorp Vault), Airflow czyta go jako Connection przez secrets backend; rotacja
-  i przeglądy dostępu. Często zamiast Asany: alert na Slack/Teams/PagerDuty,
-  ticket w Jirze/ServiceNow.
-- **`,` vs `&&` vs `;`?** Przecinek nie jest składnią shella (git dostał całą linię
-  jako swoje argumenty). `&&` = następna komenda tylko po sukcesie poprzedniej,
-  `;` = zawsze. W firmie jednorazowe kroki wpisuje się po kolei, `&&` jest w
-  skryptach/Makefile/CI.
-- **Co zrobiły komendy gita i co naprawiło stare gałęzie?** Gałąź żyje w trzech
-  miejscach: lokalnie (`feat/x`), jako lokalna kopia stanu GitHuba (`origin/feat/x`,
-  aktualizuje ją tylko `fetch`/`pull`) i na GitHubie. Zwykły `fetch` niczego nie
-  usuwa, `--prune` kasuje kopie gałęzi, których na GitHubie już nie ma. W firmie
-  raz: `git config --global fetch.prune true` + w repo „Automatically delete head
-  branches”.
-- **Dlaczego zatrzymujemy `postgres-source`?** Retry i alert działają tylko przy
-  porażce, więc trzeba ją wywołać celowo: najczęstszy realny powód retry (baza
-  źródłowa chwilowo niedostępna), jedna odwracalna komenda, dane w wolumenie,
-  Airflow ma osobną bazę metadanych, kod bez zmian. W firmie: test na dev/stagingu
-  (złe hasło w connection, chaos testy), nigdy na współdzielonej bazie.
-- **Dlaczego `tasks clear`, a nie uruchomienie całego DAG-a?** Naprawiamy ten
-  konkretny run (okno 22.10), a nie dokładamy nowego: czerwony run zostałby w
-  historii i przez `depends_on_past` zablokował kolejne dni. `clear` zeruje stan
-  wybranych instancji (`-t` regex nazwy, `-d` z downstream, `-s/-e` które runy,
-  `-y` bez potwierdzenia), scheduler uruchamia je ponownie (nowa próba =
-  `attempt=4`), `extract_github` (sukces) nietknięty. Bezpieczne dzięki
-  idempotencji. W firmie: przycisk „Clear” z „Downstream” w UI.
-- **Dlaczego reszta `skipped`?** Okno 22.10 ma 0 wierszy, `has_new_rows` (sam
-  task = success) zdecydował „nic do roboty” i short-circuit pominął resztę: bez
-  JVM i kredytów Snowflake, run zielony.
-- **Skąd dbt w Airflow i czy mam dwa dbt?** Airflow nie zawiera dbt; dołożyliśmy go
-  sami w 6.1 do naszego obrazu (`airflow-docker/Dockerfile`, osobny venv
-  `/opt/airflow/dbt_venv`), bo `BashOperator` przy `LocalExecutor` wykonuje komendę
-  w kontenerze schedulera, więc program `dbt` musi tam być. Instalacje są dwie, w
-  tych samych wersjach: `.venv` na Macu (praca z terminala, `~/.dbt/profiles.yml`) i
-  venv w obrazie (DAG, profil z repo + `.env`); kod modeli wspólny. „dbt z Airflow”
-  i „dbt z Dockera” to ta sama instalacja. W firmie: jeden obraz z CI używany
-  wszędzie albo dbt w osobnym obrazie (`DockerOperator`/`KubernetesPodOperator`),
-  albo Astronomer Cosmos (każdy model dbt jako osobny task Airflow).
-- **Jak działa `DockerOperator` i czy Java/JAR-y go wymuszają?** Kod w schedulerze
-  przez `docker.sock` prosi silnik Dockera na Macu o NOWY, chwilowy kontener z
-  obrazu `portfolio-spark:latest` (montowanie `scripts/` ze ścieżki Maca, klucze
-  AWS, komenda `python3 merge_*.py`), uruchomiony obok schedulera, nie w nim
-  (Docker-out-of-Docker); operator przekazuje logi i czeka na kod wyjścia, po
-  sukcesie kontener znika. Stały `spark-iceberg` to inny kontener z tego samego
-  obrazu, DAG go nie używa. Java nie wymusza `DockerOperator`, to wybór: Java +
-  Spark + JAR-y w obrazie Airflow = ciężki obraz, konflikty wersji, przebudowa
-  Airflow przy każdej zmianie Sparka. W firmie Airflow w ogóle nie liczy, tylko
-  zleca na klaster (`SparkSubmitOperator`, EMR, Glue, Databricks,
-  `KubernetesPodOperator`), jak ADF odpalający job w Databricks.
-- **Dlaczego zadanie w Asanie zamykam ręcznie?** Pierwsza wersja wysyła tylko `POST`
-  przy porażce. Auto-zamknięcie wymaga `on_success_callback`, odnalezienia
-  zadania (zapamiętane ID albo szukanie otwartego po nazwie), `PUT` z
-  `completed: true` i warunku, żeby nie pytać Asany przy każdym sukcesie; plus
-  deduplikacja (komentarz zamiast nowego zadania). W firmie alert (Slack,
-  PagerDuty) zamyka się sam po ustąpieniu problemu, a ticket incydentu zamyka
-  człowiek po ustaleniu przyczyny (czy nie ma dziury w danych, dlaczego baza padła).
-- **Gdzie jest ID projektu w Asanie i jak zrobić PAT?** (przy podłączaniu
-  alertu) ID to liczba po `/project/` w adresie projektu
-  (`app.asana.com/1/<workspace>/project/<ID>/list/...`; pierwsza liczba to
-  workspace, nie projekt); w aplikacji desktopowej bez paska adresu: strzałka
-  przy nazwie projektu → „Copy project link”. PAT: awatar → Settings → Apps →
-  View developer console → Personal access tokens → „+ Create new token”; token
-  widać tylko raz. PAT działa jak hasło do całego konta, zadania powstają „jako
-  Ty”; w firmie token konta technicznego z vaulta.
-- **Dlaczego VS Code pokazuje moje zmiany „na main”, skoro nic nie
-  commitowałem?** (po edycjach plików, przed utworzeniem gałęzi) Niezacommitowane
-  zmiany są w working tree, nie na żadnej gałęzi; `git switch -c <gałąź>` zabiera
-  je ze sobą, a na gałąź trafiają dopiero commitem. Dlatego gałąź wystarczy
-  utworzyć przed commitem. Liczby przy plikach w VS Code (`8`, `1`) to
-  ostrzeżenia Pylance: lokalny `.venv` nie ma Airflow, więc edytor nie rozpoznaje
-  importów; prawdziwy test to `airflow dags list-import-errors` w kontenerze.
-- **Czy przy teście awarii mam coś uruchamiać?** (po zatrzymaniu bazy) Nie:
-  scheduler sam startuje task, sam robi retry i sam woła callback; obserwuje się
-  Grid, logi kolejnych prób i Asanę.
-- **Dlaczego UI pokazuje run „23.10”, a CLI chce 22.10?** (przy `failed-deps`)
-  Grid w Airflow 2.9 pokazuje koniec okna (moment, od którego run mógł
-  wystartować), a `execution_date` w `run_id` to data logiczna = początek okna.
-  Komendy CLI biorą datę logiczną albo `run_id`; najpewniej podawać `run_id`
-  (np. `scheduled__2026-10-22T00:00:00+00:00`) z `airflow dags list-runs`.
-- **Po co dwa dbt (Mac i obraz Airflow), jak to jest w firmie i co to CI?**
-  (dopytanie po wyjaśnieniu instalacji) Jeden kod modeli, jeden program
-  zainstalowany w dwóch miejscach, w których ten kod musi działać: na Macu do
-  szybkiej pracy (`dbt run --select`, rozszerzenie dbt w VS Code) i w obrazie
-  Airflow, bo tam o 00:00 scheduler sam uruchamia `dbt build`. Jedna instalacja
-  jest możliwa (praca przez `docker exec` albo devcontainer, czyli VS Code
-  otwierający repo wewnątrz kontenera). CI (Continuous Integration) to automat
-  (u nas byłyby to GitHub Actions, `.github/workflows/`), który przy każdym PR
-  robi lint, test importu DAG-ów i `dbt build` zmienionych modeli w schemacie CI
-  (merge zablokowany do zielonych checków), a po merge'u buduje obraz, nadaje mu
-  wersję (hash commita) i wysyła do rejestru (ECR/ACR); CD (Continuous
-  Deployment) wdraża TEN SAM obraz na dev, potem na prod. W firmie obraz buduje
-  się raz, w CI, nigdy na laptopie, więc dev i prod uruchamiają bit w bit ten sam
-  dbt; laptop: venv z lockfile'a sprawdzanego w CI albo devcontainer. U nas tego
-  nie ma, bo nie ma jeszcze CI (faza 7) ani serwera i rejestru (dev i prod to
-  dwa komplety kontenerów na Macu; budowa obrazu w CI ma sens dopiero z
-  Airflowem w chmurze, faza 8). Faza 7 zacznie od checków na PR, przy okazji
-  jeden obraz dla wszystkich serwisów Airflow zamiast osobnego builda per serwis.
+- **How is this done in a company?** A technical account is created by IT/an admin on request (a ticket,
+  an owner, approval, a name like `svc-data-alerts`). Two options: an Asana service
+  account (Enterprise plans, created by a super admin, API only, but with full
+  permissions it sees all of the organisation's data, so rarely for a narrow
+  integration) or, more often, an integration user: a real functional mailbox
+  in the company's domain, a licence, an invitation to only one project, a PAT from its
+  account (least privilege). The token in a vault (Key Vault / Secrets Manager /
+  HashiCorp Vault), Airflow reads it as a Connection through a secrets backend; rotation
+  and access reviews. Often instead of Asana: an alert on Slack/Teams/PagerDuty,
+  a ticket in Jira/ServiceNow.
+- **`,` vs `&&` vs `;`?** A comma is not shell syntax (git got the whole line
+  as its arguments). `&&` = the next command only after the previous one succeeds,
+  `;` = always. In a company one-off steps are typed one by one; `&&` is in
+  scripts/Makefiles/CI.
+- **What did the git commands do, and what fixed the old branches?** A branch lives in three
+  places: locally (`feat/x`), as a local copy of GitHub's state (`origin/feat/x`,
+  updated only by `fetch`/`pull`) and on GitHub. A plain `fetch` deletes
+  nothing; `--prune` removes the copies of branches that no longer exist on GitHub. In a company
+  once: `git config --global fetch.prune true` + in the repo "Automatically delete head
+  branches".
+- **Why do we stop `postgres-source`?** Retries and the alert only work on a
+  failure, so it has to be caused deliberately: the most common real reason for retries (the
+  source database temporarily unavailable), one reversible command, the data in a volume,
+  Airflow has a separate metadata database, the code unchanged. In a company: a test on dev/staging
+  (a wrong password in the connection, chaos testing), never on a shared database.
+- **Why `tasks clear`, and not running the whole DAG?** We fix this
+  particular run (window 22.10) rather than adding a new one: a red run would stay in the
+  history and, through `depends_on_past`, block the following days. `clear` resets the state
+  of the chosen instances (`-t` a name regex, `-d` with downstream, `-s/-e` which runs,
+  `-y` without confirmation), the scheduler runs them again (a new attempt =
+  `attempt=4`), `extract_github` (success) untouched. Safe thanks to
+  idempotency. In a company: the "Clear" button with "Downstream" in the UI.
+- **Why is the rest `skipped`?** The 22.10 window has 0 rows, `has_new_rows` (the
+  task itself = success) decided "nothing to do" and the short-circuit skipped the rest: no
+  JVM and no Snowflake credits, the run green.
+- **Where does dbt in Airflow come from, and do I have two dbts?** Airflow doesn't contain dbt; we added it
+  ourselves in 6.1 to our image (`airflow-docker/Dockerfile`, a separate venv
+  `/opt/airflow/dbt_venv`), because `BashOperator` with `LocalExecutor` runs the command
+  in the scheduler's container, so the `dbt` program has to be there. There are two installations, in
+  the same versions: `.venv` on the Mac (work from the terminal, `~/.dbt/profiles.yml`) and
+  the venv in the image (the DAG, the profile from the repo + `.env`); the model code is shared. "dbt from Airflow"
+  and "dbt from Docker" are the same installation. In a company: one image from CI used
+  everywhere, or dbt in a separate image (`DockerOperator`/`KubernetesPodOperator`),
+  or Astronomer Cosmos (every dbt model as a separate Airflow task).
+- **How does `DockerOperator` work, and do Java/the JARs force it?** Code in the scheduler,
+  through `docker.sock`, asks the Docker engine on the Mac for a NEW, temporary container from the
+  image `portfolio-spark:latest` (mounting `scripts/` from the Mac's path, the AWS
+  keys, the command `python3 merge_*.py`), started next to the scheduler, not inside it
+  (Docker-out-of-Docker); the operator passes on the logs and waits for the exit code, and after
+  a success the container disappears. The permanent `spark-iceberg` is a different container from the same
+  image; the DAG doesn't use it. Java doesn't force `DockerOperator`, it is a choice: Java +
+  Spark + JARs in the Airflow image = a heavy image, version conflicts, rebuilding
+  Airflow on every Spark change. In a company Airflow doesn't compute at all, it only
+  delegates to a cluster (`SparkSubmitOperator`, EMR, Glue, Databricks,
+  `KubernetesPodOperator`), like ADF starting a job in Databricks.
+- **Why do I close the Asana task manually?** The first version only sends a `POST`
+  on a failure. Auto-closing requires an `on_success_callback`, finding the
+  task (a stored ID or searching for an open one by name), a `PUT` with
+  `completed: true` and a condition so as not to query Asana on every success; plus
+  deduplication (a comment instead of a new task). In a company an alert (Slack,
+  PagerDuty) closes itself when the problem goes away, while an incident ticket is closed by a
+  person after establishing the cause (whether there is a gap in the data, why the database went down).
+- **Where is the project ID in Asana, and how do I make a PAT?** (when wiring up the
+  alert) The ID is the number after `/project/` in the project's address
+  (`app.asana.com/1/<workspace>/project/<ID>/list/...`; the first number is the
+  workspace, not the project); in the desktop app without an address bar: the arrow
+  next to the project name → "Copy project link". PAT: avatar → Settings → Apps →
+  View developer console → Personal access tokens → "+ Create new token"; the token
+  is shown only once. A PAT works like a password to the whole account, tasks are created "as
+  you"; in a company a technical account's token from a vault.
+- **Why does VS Code show my changes "on main", if I didn't
+  commit anything?** (after editing files, before creating a branch) Uncommitted
+  changes are in the working tree, not on any branch; `git switch -c <branch>` takes
+  them along, and they reach the branch only with a commit. That's why it is enough to
+  create the branch before the commit. The numbers next to files in VS Code (`8`, `1`) are
+  Pylance warnings: the local `.venv` doesn't have Airflow, so the editor doesn't recognise the
+  imports; the real test is `airflow dags list-import-errors` in the container.
+- **Do I have to run anything during the failure test?** (after stopping the database) No:
+  the scheduler starts the task by itself, retries by itself and calls the callback by itself; you watch
+  the Grid, the logs of the successive attempts and Asana.
+- **Why does the UI show the run as "23.10", while the CLI wants 22.10?** (with `failed-deps`)
+  The Grid in Airflow 2.9 shows the end of the window (the moment from which the run could
+  start), while the `execution_date` in the `run_id` is the logical date = the start of the window.
+  CLI commands take the logical date or the `run_id`; the safest is to pass the `run_id`
+  (e.g. `scheduled__2026-10-22T00:00:00+00:00`) from `airflow dags list-runs`.
+- **Why two dbts (the Mac and the Airflow image), how is it in a company, and what is CI?**
+  (a follow-up after explaining the installation) One model codebase, one program
+  installed in two places where this code has to run: on the Mac for
+  fast work (`dbt run --select`, the dbt extension in VS Code) and in the
+  Airflow image, because that's where the scheduler runs `dbt build` by itself at 00:00. A single installation
+  is possible (working through `docker exec` or a devcontainer, i.e. VS Code
+  opening the repo inside a container). CI (Continuous Integration) is an automaton
+  (for us it would be GitHub Actions, `.github/workflows/`), which on every PR
+  runs lint, a DAG import test and `dbt build` of the changed models in a CI schema
+  (the merge blocked until the checks are green), and after the merge builds the image, gives it a
+  version (the commit hash) and pushes it to a registry (ECR/ACR); CD (Continuous
+  Deployment) deploys THE SAME image to dev, then to prod. In a company the image is built
+  once, in CI, never on a laptop, so dev and prod run bit-for-bit the same
+  dbt; on the laptop: a venv from a lockfile checked in CI or a devcontainer. We don't have this,
+  because there is no CI yet (phase 7) and no server or registry (dev and prod are
+  two sets of containers on the Mac; building the image in CI only makes sense with
+  Airflow in the cloud, phase 8). Phase 7 will start with checks on PRs and, along the way,
+  one image for all Airflow services instead of a separate build per service.
 
-**Git 23.10:** PR z 6.5 zmergowany (squash `15118df`), lokalna gałąź usunięta;
-`git pull` sam usunął `origin/feat/retries-alerting` (gałąź na GitHubie
-skasowana przy merge'u, `fetch.prune` już włączone).
+**Git 23.10:** the PR from 6.5 merged (squash `15118df`), the local branch deleted;
+`git pull` itself removed `origin/feat/retries-alerting` (the branch on GitHub
+deleted at merge, `fetch.prune` already on).
 
-**Zrobione (6.6, 23.10): backfill 11–13.09.**
-- Przygotowanie: usunięty run testowy `manual__2026-09-13` (taski `extract_*`
-  pod starymi ID sprzed TaskGroup; backfill wszedłby w ten istniejący run).
-  `manual__2026-09-14` zostaje (patrz pytania niżej).
-- Komenda: `docker compose exec airflow-scheduler airflow dags backfill
+**Done (6.6, 23.10): backfill of 11–13.09.**
+- Preparation: deleted the test run `manual__2026-09-13` (the `extract_*` tasks
+  under the old IDs from before the TaskGroups; the backfill would have entered this existing run).
+  `manual__2026-09-14` stays (see the questions below).
+- Command: `docker compose exec airflow-scheduler airflow dags backfill
   ecommerce_pipeline -s 2026-09-11 -e 2026-09-13 2>&1 | tail -n 25` (`-s/-e` =
-  które runy, obie granice włącznie; okna i zakładkę liczy Airflow). Wynik: 3/3
-  runy, 24/24 taski sukces, ok. 4,5 min na dzień, dni po kolei
+  which runs, both bounds inclusive; Airflow computes the windows and the lookback). Result: 3/3
+  runs, 24/24 tasks successful, about 4.5 min per day, days in order
   (`depends_on_past` + `max_active_runs=1`).
 
-| Dzień | Okno (z zakładką) | Wiersze z Postgresa | Walidacja | Iceberg po MERGE | dbt build |
+| Day | Window (with lookback) | Rows from Postgres | Validation | Iceberg after MERGE | dbt build |
 |---|---|---|---|---|---|
-| 11.09 | 10.09 23:50 → 12.09 00:00 | 18 | 0 w kwarantannie | 51 / 30 / 200 / 502 / 160 / 493 | `PASS=69 ERROR=0` |
-| 12.09 | 11.09 23:50 → 13.09 00:00 | 21 | 0 | bez zmian | `PASS=69 ERROR=0` |
-| 13.09 | 12.09 23:50 → 14.09 00:00 | 26 (jak test z 21.10) | 0 | bez zmian | `PASS=69 ERROR=0` |
+| 11.09 | 10.09 23:50 → 12.09 00:00 | 18 | 0 quarantined | 51 / 30 / 200 / 502 / 160 / 493 | `PASS=69 ERROR=0` |
+| 12.09 | 11.09 23:50 → 13.09 00:00 | 21 | 0 | unchanged | `PASS=69 ERROR=0` |
+| 13.09 | 12.09 23:50 → 14.09 00:00 | 26 (as in the test of 21.10) | 0 | unchanged | `PASS=69 ERROR=0` |
 
-- Freshness `WARN` każdego dnia (dane kończą się 15.09, oczekiwane). Żadnego
-  nowego zadania w Asanie. Run 13.09 przetworzył to samo okno co
-  `manual__2026-09-14` (run ręczny z datą D = okno D-1): ten sam dzień drugi raz,
-  bez duplikatów.
-- **Co backfill udowadnia, a czego nie.** Udowadnia: okna per dzień, zakładkę,
-  bramkę jakości, kolejność dni oraz brak duplikatów i fałszywych wersji SCD2
-  przy ponownym przetwarzaniu (`no changed rows -- nothing to insert`). Nie
-  udowadnia przetwarzania „swojego dnia”: `merge_*` czytają CAŁY raw i
-  deduplikują (`orders: incoming batch (deduped) = 200 rows` przy 18 wierszach z
-  extractu), słabość znana z 6.4. Koszt przy backfillu 3 miesięcy: każdy dzień
-  przetwarza całą dotychczasową historię (czas rośnie kwadratowo), a raw puchnie,
-  bo każdy run dopisuje swoje pliki (append-only z `run_id`). Poprawka po 27.10:
-  `merge_*` czytają tylko pliki bieżącego runu (ścieżki z extractu przez XCom
-  albo filtr po `run_id`). To też odpowiedź na pytanie kontrolne z planu „jak
-  zrobić backfill 3 miesięcy?”.
-- Dowody zrobione 23.10: zrzut Grida (3 zielone runy `backfill__`) i zamkniętego
-  zadania w Asanie.
+- Freshness `WARN` every day (the data ends on 15.09, expected). No
+  new task in Asana. The 13.09 run processed the same window as
+  `manual__2026-09-14` (a manual run with date D = window D-1): the same day a second time,
+  without duplicates.
+- **What the backfill proves, and what it doesn't.** It proves: per-day windows, the lookback,
+  the quality gate, the order of days, and no duplicates or false SCD2 versions
+  on reprocessing (`no changed rows -- nothing to insert`). It doesn't
+  prove processing "its own day": `merge_*` read the WHOLE raw layer and
+  deduplicate (`orders: incoming batch (deduped) = 200 rows` for 18 rows from the
+  extract), a weakness known since 6.4. The cost for a 3-month backfill: every day
+  processes the whole history so far (time grows quadratically), and raw keeps growing,
+  because every run appends its files (append-only with `run_id`). Fix after 27.10:
+  `merge_*` read only the current run's files (paths from the extract via XCom
+  or a filter on `run_id`). This is also the answer to the control question from the plan "how
+  do you backfill 3 months?".
+- Evidence taken on 23.10: a screenshot of the Grid (3 green `backfill__` runs) and of the closed
+  Asana task.
 
-**Pytania z tego kroku i czego uczą:**
-- **Dlaczego nie usuwamy też runu 14.09?** (przed backfillem, po decyzji o
-  usunięciu 13.09) Ma już nowe ID tasków (powtórzony 22.10 z TaskGroupami; brak
-  mu tylko `dbt_source_freshness`, dodanego później), leży poza zakresem
-  backfillu (dla `depends_on_past` 11.09 nie ma nic wcześniej, 12.09 patrzy na
-  11.09, 13.09 na 12.09, nikt nie patrzy „w przód”) i jest dowodem pierwszego
-  pełnego runu z dbt `PASS=51`. Usuwa się tylko to, co realnie przeszkadza.
-- **Skąd „nowe” dane w Postgresie, skoro nikt do niego nie pisze?** (po wyniku
-  backfillu) Nie ma nowych danych. `postgres-source` zawiera dane seed
-  wygenerowane raz (`seed.py`) z datami w przeszłości do 15.09. Extract bierze
-  wiersze, których znacznik czasu wpada w okno runu, więc backfill tylko kroi
-  gotową historię na dni; 18/21/26 to liczba wierszy z danym dniem we wszystkich
-  6 tabelach. W firmie źródło żyje (aplikacja ciągle pisze), a backfill
-  odtwarza przeszłe dni z tych samych zasad okna.
-- **Dlaczego liczba wierszy różni się między dniami, a Iceberg nie rośnie?** (jw.)
-  Te wiersze są w Icebergu od fazy 3 (pierwsze pełne załadowanie). MERGE
-  porównuje po kluczu: fakty z istniejącym kluczem nic nie dopisują, wymiary
-  SCD2 tworzą nową wersję tylko przy zmianie atrybutu. Iceberg urośnie przy
-  prawdziwej zmianie: nowe zamówienie (nowy klucz) albo klient zmieniający kraj
-  (nowa wersja SCD2). Stąd pomysł na demonstrację w 6.7.
+**Questions from this step and what they teach:**
+- **Why don't we delete the 14.09 run as well?** (before the backfill, after deciding to
+  delete 13.09) It already has the new task IDs (re-run on 22.10 with the TaskGroups; it lacks
+  only `dbt_source_freshness`, added later), it lies outside the backfill's
+  range (for `depends_on_past`, 11.09 has nothing before it, 12.09 looks at
+  11.09, 13.09 at 12.09, nobody looks "forward") and it is the evidence of the first
+  full run with dbt `PASS=51`. You delete only what really gets in the way.
+- **Where does the "new" data in Postgres come from, if nobody writes to it?** (after the
+  backfill result) There is no new data. `postgres-source` contains seed data
+  generated once (`seed.py`) with dates in the past up to 15.09. The extract takes the
+  rows whose timestamp falls into the run's window, so the backfill only slices the
+  ready history into days; 18/21/26 is the number of rows with that day across all
+  6 tables. In a company the source is alive (an application keeps writing), and a backfill
+  reconstructs past days with the same window rules.
+- **Why does the row count differ between days, while Iceberg doesn't grow?** (as above)
+  These rows have been in Iceberg since phase 3 (the first full load). The MERGE
+  compares by key: facts with an existing key add nothing, SCD2
+  dimensions create a new version only when an attribute changes. Iceberg will grow with a
+  real change: a new order (a new key) or a customer changing country
+  (a new SCD2 version). Hence the idea for the demonstration in 6.7.
 
-**Zrobione (6.7, część 1, 23.10): symulator ruchu w źródle.**
-- Decyzja (Twoja): jeden plik `scripts/seed.py`, nie osobny skrypt; raz dziennie
-  wystarczy (pipeline ma dzienne okno, dwie porcje i tak trafiłyby do jednego
-  runu).
-- `seed.py`: `--mode init` (dotychczasowy, logika bez zmian; historia, raz, na
-  pustą bazę) i `--mode daily`: jeden dzień aktywności ze znacznikami między
-  dzisiejszą 00:00 UTC a teraz — 1–3 nowych klientów (Faker), 1–2 zmiany kraju
-  lub e-maila u starych klientów (nowe wersje SCD2), z szansą 50% zmiana ceny
-  produktu o 5–20% (SCD2 + nowy snapshot ceny w dzisiejszych zamówieniach),
-  5–15 nowych zamówień z pozycjami, historią statusów i w ok. 60% płatnością,
-  3–8 starych otwartych zamówień o krok dalej (pending → paid z płatnością albo
-  cancelled, paid → shipped, shipped → delivered). Historii nie zmienia, tylko
-  dopisuje. Ziarno losowania: `init` 42, `daily` data (inne dane co dzień,
-  powtarzalne w obrębie dnia). Zabezpieczenie dnia: zamówienie utworzone dziś =
-  porcja zrobiona → nic nie robi (idempotencja; DAG widzą oba Airflowy). Jedna
-  transakcja na całość. `DB_CONFIG` ze zmiennych środowiskowych jak w
-  `extract.py` (było `localhost` na sztywno, decyzja 8).
-- `dags/source_simulator.py`: jeden task `generate_daily_activity`
-  (`BashOperator`), retry i alert do Asany jak w pipelinie, `catchup=False`
-  (zdarzenia dostają znacznik „teraz”), harmonogram z configu: dev `30 23 * * *`
-  (30 min przed runem dev o 00:00, którego okno [D, D+1) zawiera nowe wiersze),
-  prod `null` (tylko ręcznie; oba środowiska czytają ten sam `postgres-source`).
-  Nie jest taskiem `ecommerce_pipeline`: generowanie źródła to nie część
-  pipeline'u (backfill przeszłości nie może dopisywać „dzisiejszych” danych).
-- `airflow-docker/requirements.txt`: `faker` (wersja z constraints Airflow;
-  lokalnie 40.39.0 z `uv.lock`).
-- Test: z Maca `--mode daily` dwa razy → „1 new customers, 1 customer changes,
-  1 price changes, 6 new orders, 8 order status transitions”, potem „already
-  generated -- nothing to do”. Przebudowa obrazu (`--profile prod up -d
-  --build`, 49 s, dev i prod odtworzone), `list-import-errors` pusto, `dags test
-  source_simulator` na schedulerze dev → „already generated” + SUCCESS (`faker`
-  w obrazie, połączenie przez zmienne środowiskowe, zabezpieczenie działa z
-  kontenera). Oba DAG-i w dev `is_paused = False` (`unpause` wypisał `True`, czyli
-  stan sprzed zmiany; sprawdzone przez `airflow dags list`).
-- Pierwszy prawdziwy przyrost: run dev o 00:00 UTC 24.10 (okno 23.10) przetworzy
-  wiersze wygenerowane 23.10 z Maca — wynik do zapisania 24.10.
-- Ruff SIM117 (zagnieżdżone `with`) poprawione w `main()`: `with connection,
+**Done (6.7, part 1, 23.10): a traffic simulator in the source.**
+- Decision (yours): one file `scripts/seed.py`, not a separate script; once a day
+  is enough (the pipeline has a daily window, two batches would end up in one
+  run anyway).
+- `seed.py`: `--mode init` (the existing one, logic unchanged; history, once, on an
+  empty database) and `--mode daily`: one day of activity with timestamps between
+  today's 00:00 UTC and now — 1–3 new customers (Faker), 1–2 country
+  or email changes for existing customers (new SCD2 versions), with a 50% chance a price change
+  of a product by 5–20% (SCD2 + a new price snapshot in today's orders),
+  5–15 new orders with line items, status history and in about 60% a payment,
+  3–8 old open orders moved one step on (pending → paid with a payment or
+  cancelled, paid → shipped, shipped → delivered). It doesn't change history, it only
+  appends. Random seed: `init` 42, `daily` the date (different data every day,
+  repeatable within a day). The day guard: an order created today = the
+  batch is done → it does nothing (idempotency; both Airflows see the DAG). One
+  transaction for everything. `DB_CONFIG` from environment variables as in
+  `extract.py` (it was hard-coded `localhost`, decision 8).
+- `dags/source_simulator.py`: one task `generate_daily_activity`
+  (`BashOperator`), retries and the Asana alert as in the pipeline, `catchup=False`
+  (events get the "now" timestamp), the schedule from the config: dev `30 23 * * *`
+  (30 min before the dev run at 00:00, whose window [D, D+1) contains the new rows),
+  prod `null` (manual only; both environments read the same `postgres-source`).
+  It is not a task of `ecommerce_pipeline`: generating the source is not part of the
+  pipeline (a backfill of the past must not append "today's" data).
+- `airflow-docker/requirements.txt`: `faker` (the version from the Airflow constraints;
+  locally 40.39.0 from `uv.lock`).
+- Test: from the Mac `--mode daily` twice → "1 new customers, 1 customer changes,
+  1 price changes, 6 new orders, 8 order status transitions", then "already
+  generated -- nothing to do". Image rebuild (`--profile prod up -d
+  --build`, 49 s, dev and prod recreated), `list-import-errors` empty, `dags test
+  source_simulator` on the dev scheduler → "already generated" + SUCCESS (`faker`
+  in the image, the connection through environment variables, the guard works from the
+  container). Both DAGs in dev `is_paused = False` (`unpause` printed `True`, i.e.
+  the state before the change; checked with `airflow dags list`).
+- The first real increment: the dev run at 00:00 UTC on 24.10 (window 23.10) will process
+  the rows generated on 23.10 from the Mac — the result to be recorded on 24.10.
+- Ruff SIM117 (nested `with`) fixed in `main()`: `with connection,
   connection.cursor() as cursor:`.
-- Mój błąd: edycje `seed.py` zacząłem na `main` (w working tree, bez commita),
-  gałąź `feat/source-simulator` powstała dopiero po Twojej uwadze. Zasada:
-  gałąź przed pierwszą edycją.
+- My mistake: I started editing `seed.py` on `main` (in the working tree, without a commit);
+  the branch `feat/source-simulator` was created only after your remark. Rule:
+  a branch before the first edit.
 
-**Pytania z tego kroku i czego uczą:**
-- **Czy seed musi być historyczny i w osobnym pliku?** (pomysł generowania
-  nowych rekordów z kombinacji imion, nazwisk i krajów) Nie: jeden plik z dwoma
-  trybami. Historia już leży w wolumenie Postgresa, `init` jest tylko do
-  zakładania środowiska od zera; tryb dzienny tylko dopisuje, więc backfill
-  przeszłych dni dalej jest ważnym testem. W firmie danych z prod (PII) nie
-  kopiuje się na dev: dane syntetyczne (Faker, SDV) albo zanonimizowana kopia;
-  do systemu źródłowego się nie pisze (cudza aplikacja), u nas `postgres-source`
-  ją udaje.
-- **Raz czy dwa razy dziennie?** Raz: pipeline bierze okno całego dnia, więc dwie
-  porcje trafiłyby do jednego runu. Dwa przebiegi mają sens dopiero przy
-  pipelinie co kilka godzin (wtedy zabezpieczenie „ten dzień” → „ta połowa
-  dnia”). Ograniczenie lokalne: Airflow działa, gdy Mac nie śpi; po wybudzeniu
-  symulator wygeneruje dane z bieżącą datą.
-- **Co dokładnie dodałeś w `seed.py`?** Dwa tryby (`argparse`), ziarno per tryb,
-  `DB_CONFIG` z env, „pokrętła” `DAILY_*`, dotychczasowy `main()` jako
-  `seed_initial()`, funkcje dnia: losowanie godzin zdarzeń bez przyszłości,
-  wolny e-mail (`UNIQUE`), zabezpieczenie dnia, nowi klienci, zmiany klientów,
-  zmiana ceny, nowe zamówienia (klient może zamówić dopiero po założeniu konta),
-  postęp otwartych zamówień, `simulate_daily_activity()` składające dzień.
-- **Dlaczego `--profile prod` tylko w pierwszej komendzie i czy dev też dostał
-  `faker`?** Profil to flaga jednej komendy, nie stan. `up --build` tworzy i
-  przebudowuje, więc musi objąć prod; `exec` wskazuje działający kontener po
-  nazwie (`airflow-scheduler` = dev, `airflow-scheduler-prod` = prod). Dev też
-  został odtworzony (`Started` przy serwisach bez `-prod`, `Running` = nietknięte),
-  dowód: `dags test` na schedulerze dev zaimportował `faker`.
-- **Dlaczego `--profile prod` uruchamia dev i prod i jak uruchomić sam prod?**
-  Serwis bez `profiles:` jest aktywny zawsze, profil tylko DOKŁADA serwisy. Sam
-  prod: nazwy serwisów w komendzie (`... up -d --build airflow-init-prod
-  airflow-webserver-prod airflow-scheduler-prod`; `depends_on` dociąga bazę
-  proda). Porządniej: profil `dev` dla serwisów dev (faza 7). W firmie dev i
-  prod to osobne wdrożenia.
-- **Skąd w VS Code „Env var required but not provided: DBT_SNOWFLAKE_ACCOUNT”?**
-  Rozszerzenie dbt Power User parsuje projekt z profilem używającym `env_var()`,
-  a od 22.10 zmienne są tylko w `.env`. dbt 1.12 sam wczytuje `.env`, ale tylko
-  z bieżącego katalogu, a projekt dbt jest w `dbt_portfolio/`. Rozwiązanie bez
-  kopiowania sekretów: `ln -s ../.env dbt_portfolio/.env` + przeładowanie okna
-  (`.env` w `.gitignore` obejmuje też podkatalogi). W firmie: menedżer sekretów
-  albo direnv. Pipeline tego nie dotyczy.
-- **Co znaczy ostrzeżenie Ruff SIM117?** Dwa zagnieżdżone `with` można zapisać
-  jako jedno z kilkoma kontekstami; działanie identyczne. W firmie takie uwagi
-  zatrzymuje pre-commit hook i check w CI (faza 7).
+**Questions from this step and what they teach:**
+- **Does the seed have to be historical and in a separate file?** (the idea of generating
+  new records from combinations of first names, last names and countries) No: one file with two
+  modes. The history already sits in the Postgres volume, `init` is only for
+  setting up an environment from scratch; the daily mode only appends, so a backfill
+  of past days remains a valid test. In a company production data (PII) is not
+  copied to dev: synthetic data (Faker, SDV) or an anonymised copy;
+  nobody writes to the source system (someone else's application) — for us `postgres-source`
+  plays that role.
+- **Once or twice a day?** Once: the pipeline takes the window of the whole day, so two
+  batches would end up in one run. Two runs make sense only with a
+  pipeline every few hours (then the guard "this day" → "this half of the
+  day"). A local limitation: Airflow works while the Mac is awake; after waking up
+  the simulator will generate data with the current date.
+- **What exactly did you add to `seed.py`?** Two modes (`argparse`), a seed per mode,
+  `DB_CONFIG` from env, the `DAILY_*` "knobs", the existing `main()` as
+  `seed_initial()`, the day's functions: drawing event times without the future,
+  a free email (`UNIQUE`), the day guard, new customers, customer changes,
+  a price change, new orders (a customer can order only after creating an account),
+  the progress of open orders, `simulate_daily_activity()` putting the day together.
+- **Why `--profile prod` only in the first command, and did dev also get
+  `faker`?** A profile is a flag of one command, not state. `up --build` creates and
+  rebuilds, so it has to include prod; `exec` points at a running container by
+  name (`airflow-scheduler` = dev, `airflow-scheduler-prod` = prod). Dev was also
+  recreated (`Started` for the services without `-prod`, `Running` = untouched),
+  proof: `dags test` on the dev scheduler imported `faker`.
+- **Why does `--profile prod` start dev and prod, and how do I start prod alone?**
+  A service without `profiles:` is always active; a profile only ADDS services. Prod
+  alone: service names in the command (`... up -d --build airflow-init-prod
+  airflow-webserver-prod airflow-scheduler-prod`; `depends_on` pulls in prod's
+  database). Cleaner: a `dev` profile for the dev services (phase 7). In a company dev and
+  prod are separate deployments.
+- **Where does "Env var required but not provided: DBT_SNOWFLAKE_ACCOUNT" in VS Code come from?**
+  The dbt Power User extension parses the project with a profile using `env_var()`,
+  and since 22.10 the variables are only in `.env`. dbt 1.12 loads `.env` by itself, but only
+  from the current directory, and the dbt project is in `dbt_portfolio/`. A solution without
+  copying secrets: `ln -s ../.env dbt_portfolio/.env` + reloading the window
+  (`.env` in `.gitignore` also covers subdirectories). In a company: a secrets manager
+  or direnv. The pipeline is not affected.
+- **What does the Ruff warning SIM117 mean?** Two nested `with` statements can be written
+  as one with several contexts; the behaviour is identical. In a company such remarks are
+  stopped by a pre-commit hook and a CI check (phase 7).
 
-**Git 23.10:** PR symulatora zmergowany (squash `84ece27`, #22). Weszła w nim też
-zmiana `.gitignore`: wzorzec `DE_Interview_Cheatsheet*.docx` zamiast samego
-`-2`, bo nowa kopia cheat sheetu `-3` nie była ignorowana.
+**Git 23.10:** the simulator PR merged (squash `84ece27`, #22). It also included
+a `.gitignore` change: the pattern `DE_Interview_Cheatsheet*.docx` instead of only
+`-2`, because the new copy of the cheat sheet `-3` was not ignored.
 
-**Zrobione (6.7, część 2, 23–24.10): pierwszy prawdziwy przyrost przez cały pipeline.**
-- Ręczny run `airflow dags test ecommerce_pipeline 2026-10-24` (okno 23.10, 22:00
-  UTC): 57 wierszy z Postgresa (2 klientów, 1 produkt, 14 zamówień = 6 nowych +
-  8 zmienionych statusów, 15 pozycji, 7 płatności, 18 wpisów historii),
-  walidacja bez kwarantanny, dbt `PASS=69 ERROR=0`.
+**Done (6.7, part 2, 23–24.10): the first real increment through the whole pipeline.**
+- A manual run `airflow dags test ecommerce_pipeline 2026-10-24` (window 23.10, 22:00
+  UTC): 57 rows from Postgres (2 customers, 1 product, 14 orders = 6 new +
+  8 changed statuses, 15 line items, 7 payments, 18 history entries),
+  validation without quarantine, dbt `PASS=69 ERROR=0`.
 
-| Tabela w Icebergu | Przed | Po | Skąd różnica |
+| Iceberg table | Before | After | Where the difference comes from |
 |---|---|---|---|
-| customer (wszystkie wersje) | 51 | 53 | +1 nowy klient, +1 wersja SCD2 (zmiana e-maila) |
-| product (wszystkie wersje) | 30 | 31 | +1 wersja SCD2 (zmiana ceny) |
-| orders | 200 | 206 | +6 nowych (8 przejść statusów aktualizuje istniejące) |
-| order_items | 502 | 517 | +15 pozycji |
-| payments | 160 | 167 | 4 opłacone tego samego dnia + 3 przejścia pending → paid |
-| order_status_history | 493 | 511 | 6 × pending + 4 × paid + 8 przejść |
+| customer (all versions) | 51 | 53 | +1 new customer, +1 SCD2 version (email change) |
+| product (all versions) | 30 | 31 | +1 SCD2 version (price change) |
+| orders | 200 | 206 | +6 new (8 status transitions update existing rows) |
+| order_items | 502 | 517 | +15 line items |
+| payments | 160 | 167 | 4 paid the same day + 3 transitions pending → paid |
+| order_status_history | 493 | 511 | 6 × pending + 4 × paid + 8 transitions |
 
-- Snowflake: `fct_orders` ma 6 nowych zamówień (201–206: 4 `paid` z
-  `paid_amount` = wartość, 2 `pending` z 0). SCD2 w tabeli Iceberg: klient 39
-  (zmiana e-maila) ma dwie wersje, `valid_to` starej = `valid_from` nowej, nowa
-  `is_current = TRUE`; klient 51 (nowy) jedną. Analityk widzi 0 z 6 nowych
-  zamówień — żadne nie jest z DE (WS, IT, CA, KG, LV, ID), czyli RLS działa na
-  świeżych wierszach. Liczniki `COUNT(*)` per rola do powtórzenia pojedynczo
-  (worksheet przy kilku zaznaczonych zapytaniach pokazuje tylko ostatni wynik).
-- Nocny run z harmonogramu `scheduled__2026-10-23` (00:00–00:01:29 UTC): to samo
-  okno drugi raz → znów 57 wierszy, tabele bez zmian (53 / 31 / 206 / 517 / 167 /
+- Snowflake: `fct_orders` has 6 new orders (201–206: 4 `paid` with
+  `paid_amount` = the value, 2 `pending` with 0). SCD2 in the Iceberg table: customer 39
+  (email change) has two versions, the old one's `valid_to` = the new one's `valid_from`, the new one
+  `is_current = TRUE`; customer 51 (new) has one. The analyst sees 0 of the 6 new
+  orders — none is from DE (WS, IT, CA, KG, LV, ID), i.e. RLS works on
+  fresh rows. The `COUNT(*)` counters per role to be repeated one by one
+  (with several selected queries, the worksheet shows only the last result).
+- The nightly scheduled run `scheduled__2026-10-23` (00:00–00:01:29 UTC): the same
+  window a second time → again 57 rows, the tables unchanged (53 / 31 / 206 / 517 / 167 /
   511), SCD2 `no changed rows -- nothing to insert`, dbt `PASS=69`.
-  Idempotentność potwierdzona na prawdziwym przyroście.
+  Idempotency confirmed on a real increment.
 
-**Odkryte przy tym:**
-- **`dags test` obok działającego schedulera.** Run ląduje we wspólnej bazie
-  metadanych, a scheduler (DAG włączony) też zaczyna wykonywać jego taski:
-  `extract_github` wykonał się 3 razy („Executor reports task instance …
-  finished (success) although the task says it's queued”). Szkody brak dzięki
-  idempotencji (raw z GitHuba dostał trzy kopie). Zasada: `dags test` tylko na
-  wstrzymanym DAG-u albo w osobnym środowisku.
-- **Kolizja dat.** Run ręczny z datą logiczną 24.10 zajmuje tę datę; scheduler nie
-  utworzyłby swojego runu za 24.10 → cicha dziura w danych (żadnej porażki, więc
-  żadnego alertu). `manual__2026-10-24` usunięty po zebraniu wyników (Browse →
-  DAG Runs). Mój błąd: zaproponowałem tę komendę bez sprawdzenia skutków dla
-  kolejnych runów.
-- **Niepełne okno.** GitHub: 627 wierszy przy runie o 22:00 UTC (dzień 23.10 jeszcze
-  trwał), 635 w nocy. Dlatego run za dzień D startuje dopiero D+1 o 00:00.
-- **Trigger `set_updated_at` w Postgresie** (`ddl.sql`) przy każdym `UPDATE` ustawia
-  `updated_at = now()`, więc godziny zmian podawane przez symulator są
-  nadpisywane prawdziwym czasem zmiany: `valid_from` nowej wersji klienta 39 =
-  20:59:56 UTC (moment uruchomienia). Realistyczne (tak działa prawdziwa
-  aplikacja); do poprawy komentarz w `seed.py`, który sugeruje losowe godziny.
-- **`Duration` ok. miesiąca przy `manual__2026-09-14`:** artefakt `dags test` (Start
-  Date = data logiczna 14.09, End Date = faktyczny koniec 22.10); naprawdę ok.
-  5 min. Run z harmonogramu ma normalne 1 min 29 s.
-- **`-0700` w wynikach Snowflake'a:** `TIMESTAMP_LTZ` wyświetlany w strefie sesji
-  (domyślnie Los Angeles); 13:59:56 -0700 = 20:59:56 UTC. Staging dbt
-  konwertuje do UTC, więc modele od tego nie zależą.
+**Discovered along the way:**
+- **`dags test` next to a running scheduler.** The run lands in the shared metadata
+  database, and the scheduler (DAG enabled) also starts executing its tasks:
+  `extract_github` ran 3 times ("Executor reports task instance …
+  finished (success) although the task says it's queued"). No harm thanks to
+  idempotency (the GitHub raw got three copies). Rule: `dags test` only on a
+  paused DAG or in a separate environment.
+- **Date collision.** A manual run with the logical date 24.10 occupies that date; the scheduler would
+  not create its own run for 24.10 → a silent gap in the data (no failure, so
+  no alert). `manual__2026-10-24` deleted after collecting the results (Browse →
+  DAG Runs). My mistake: I proposed this command without checking the consequences for
+  the following runs.
+- **An incomplete window.** GitHub: 627 rows in the run at 22:00 UTC (day 23.10 was still
+  going on), 635 at night. That is why the run for day D starts only at D+1 00:00.
+- **The `set_updated_at` trigger in Postgres** (`ddl.sql`) on every `UPDATE` sets
+  `updated_at = now()`, so the change times given by the simulator are
+  overwritten with the real time of the change: the new version of customer 39 has `valid_from` =
+  20:59:56 UTC (the moment of the run). Realistic (that is how a real
+  application works); to fix: the comment in `seed.py` that suggests random times.
+- **`Duration` of about a month for `manual__2026-09-14`:** an artefact of `dags test` (Start
+  Date = the logical date 14.09, End Date = the actual end on 22.10); in reality about
+  5 min. The scheduled run has a normal 1 min 29 s.
+- **`-0700` in Snowflake's results:** `TIMESTAMP_LTZ` displayed in the session's time zone
+  (Los Angeles by default); 13:59:56 -0700 = 20:59:56 UTC. dbt staging
+  converts to UTC, so the models don't depend on it.
 
-**Pytania z tego kroku i czego uczą:**
-- **Czy teraz mam dwa DAG-i?** (po dodaniu symulatora) Tak, każdy Airflow wczytuje
-  oba pliki: `source_simulator` (dev 23:30 UTC, prod tylko ręcznie) i
-  `ecommerce_pipeline` (dev 00:00, prod 03:00). Łączy je tylko czas, bez jawnej
-  zależności — celowo, bo symulator gra cudzą aplikację. W firmie przy zależności
-  między własnymi DAG-ami: Datasets (data-aware scheduling, Airflow 2.4+),
-  `TriggerDagRunOperator`, `ExternalTaskSensor`; przy cudzym źródle: okno z
-  zakładką + sprawdzanie świeżości.
-- **Czy możemy sprawdzić przyrost od razu, bez czekania na noc?** Technicznie tak
-  (`dags test` z datą 24.10), ale z dwoma skutkami ubocznymi opisanymi wyżej
-  (podwójne wykonanie przez scheduler, zajęta data). Właściwy sposób: poczekać na
-  run z harmonogramu albo przeliczyć zamknięty dzień backfillem/Clear.
-- **Dlaczego to jest „test”?** Nazwa myli: `dags test` = uruchom cały DAG raz,
-  teraz, w terminalu, bez schedulera; taski działają naprawdę (S3, Iceberg,
-  Snowflake). Brak retry z przerwą, brak `max_active_runs`. W firmie: narzędzie
-  developera lokalnie i w CI; na prod runy uruchamia tylko scheduler.
-- **Dlaczego w `dags test` podaje się datę dnia następnego?** W Airflow 2 data runu z
-  harmonogramu/backfillu = dzień danych (początek okna), run startuje po jego
-  końcu. W runie ręcznym podana data = moment uruchomienia, a Airflow przypisuje
-  ostatni zakończony dzień przed nią: 24.10 → okno 23.10. Trigger z datą z
-  przyszłości jest domyślnie zablokowany (`allow_trigger_in_future = False`).
-- **Dlaczego jeden run w DAG Runs trwa miesiąc?** Artefakt `dags test` (wyżej).
+**Questions from this step and what they teach:**
+- **So now I have two DAGs?** (after adding the simulator) Yes, every Airflow loads
+  both files: `source_simulator` (dev 23:30 UTC, prod manual only) and
+  `ecommerce_pipeline` (dev 00:00, prod 03:00). They are linked only by time, without an explicit
+  dependency — on purpose, because the simulator plays someone else's application. In a company, with a dependency
+  between your own DAGs: Datasets (data-aware scheduling, Airflow 2.4+),
+  `TriggerDagRunOperator`, `ExternalTaskSensor`; with someone else's source: a window with a
+  lookback + freshness checks.
+- **Can we check the increment right away, without waiting for the night?** Technically yes
+  (`dags test` with the date 24.10), but with the two side effects described above
+  (double execution by the scheduler, an occupied date). The right way: wait for the
+  scheduled run or reprocess a closed day with a backfill/Clear.
+- **Why is it a "test"?** The name is misleading: `dags test` = run the whole DAG once,
+  now, in the terminal, without the scheduler; the tasks run for real (S3, Iceberg,
+  Snowflake). No retries with a delay, no `max_active_runs`. In a company: a developer's tool
+  locally and in CI; in prod runs are started only by the scheduler.
+- **Why does `dags test` take the date of the next day?** In Airflow 2 the date of a
+  scheduled/backfill run = the day of data (the start of the window), and the run starts after its
+  end. In a manual run the given date = the moment of the run, and Airflow assigns
+  the last completed day before it: 24.10 → window 23.10. A trigger with a date in the
+  future is blocked by default (`allow_trigger_in_future = False`).
+- **Why does one run in DAG Runs last a month?** An artefact of `dags test` (above).
 
-**Zrobione (6.7, część 3a, 24.10): testy `dbt-expectations` na `fct_orders`.**
-- `packages.yml`: `metaplane/dbt_expectations` 0.10.10 (utrzymywana kontynuacja
-  zarchiwizowanego `calogica/dbt_expectations`; dbt >=1.7 <3.0), wersja
-  przypięta jak `dbt_utils`; `dbt deps` dociągnął zależność `dbt_date` 0.21.0,
-  `package-lock.yml` zaktualizowany. `dbt_packages/` w `.gitignore`; Airflow
-  widzi pakiet bez przebudowy obrazu, bo `dbt_portfolio/` jest zamontowany (w
-  firmie `dbt deps` w CI/przy budowie obrazu — faza 7).
-- Trzy testy w `models/marts/schema.yml`, każdy łapie coś, czego dotychczasowe
-  nie widziały:
+**Done (6.7, part 3a, 24.10): `dbt-expectations` tests on `fct_orders`.**
+- `packages.yml`: `metaplane/dbt_expectations` 0.10.10 (the maintained continuation of
+  the archived `calogica/dbt_expectations`; dbt >=1.7 <3.0), the version
+  pinned like `dbt_utils`; `dbt deps` pulled in the dependency `dbt_date` 0.21.0,
+  `package-lock.yml` updated. `dbt_packages/` in `.gitignore`; Airflow
+  sees the package without rebuilding the image, because `dbt_portfolio/` is mounted (in a
+  company `dbt deps` in CI/when building the image — phase 7).
+- Three tests in `models/marts/schema.yml`, each catching something the existing ones
+  didn't see:
 
-| Test | Kolumna | Co łapie | Poziom |
+| Test | Column | What it catches | Level |
 |---|---|---|---|
-| `expect_row_values_to_have_recent_data` (≤ 2 dni) | `order_date` | cichy zator: mart przestał dostawać dane, choć żaden task nie padł (lekcja z 6.5) | `warn` |
-| `expect_column_values_to_match_regex` (`^[A-Z]{2}$`) | `country_at_order` | złamany kontrakt formatu ze źródła; RLS filtruje po tej wartości, więc zły format = błędne uprawnienia | `error` |
-| `expect_column_values_to_be_between` (0–10 000) | `gross_order_value` | anomalia wartości (zdublowane pozycje, zła cena); pułap z kształtu danych: ceny 5–500, max 4 pozycje × 3 szt. ≈ 6000 | `warn` + `store_failures` |
+| `expect_row_values_to_have_recent_data` (≤ 2 days) | `order_date` | a silent stall: the mart stopped receiving data although no task failed (the lesson from 6.5) | `warn` |
+| `expect_column_values_to_match_regex` (`^[A-Z]{2}$`) | `country_at_order` | a broken format contract from the source; RLS filters on this value, so a wrong format = wrong permissions | `error` |
+| `expect_column_values_to_be_between` (0–10,000) | `gross_order_value` | a value anomaly (duplicated line items, a wrong price); the ceiling from the shape of the data: prices 5–500, max 4 line items × 3 units ≈ 6000 | `warn` + `store_failures` |
 
-- Pierwsze uruchomienie: test świeżości `ERROR` (`Required var
-  'dbt_date:time_zone' not found`). Naprawa: `vars: 'dbt_date:time_zone': 'UTC'`
-  w `dbt_project.yml` (UTC, bo staging konwertuje wszystkie znaczniki do UTC).
-  Drugie uruchomienie w kontenerze dev (`dbt test --select fct_orders --target
-  dev`): `PASS=20 WARN=0 ERROR=0`. Ostatnia praca wymagająca Snowflake'a przed
-  końcem triala zrobiona.
-- `seed.py`: komentarz o triggerze `set_updated_at` (wszystkie tabele poza
-  `order_status_history`): godziny podawane w UPDATE są nadpisywane przez
-  `now()`, losowe czasy działają tylko przy INSERT i w `changed_at` historii.
+- First run: the freshness test `ERROR` (`Required var
+  'dbt_date:time_zone' not found`). Fix: `vars: 'dbt_date:time_zone': 'UTC'`
+  in `dbt_project.yml` (UTC, because staging converts all timestamps to UTC).
+  Second run in the dev container (`dbt test --select fct_orders --target
+  dev`): `PASS=20 WARN=0 ERROR=0`. The last work requiring Snowflake before
+  the end of the trial is done.
+- `seed.py`: a comment about the `set_updated_at` trigger (all tables except
+  `order_status_history`): the times given in an UPDATE are overwritten by
+  `now()`; random times take effect only on INSERT and in the history's `changed_at`.
 
-**Pytania z tego kroku i czego uczą:**
-- **Co znaczy „długość komendy to cena uruchamiania dbt w kontenerze”?** (przy
-  komendzie testów) Sam test to `dbt test --select fct_orders --target dev`;
-  reszta to dojście do dbt w kontenerze: `docker compose exec airflow-scheduler`
-  (tam profil i zmienne są gotowe: `DBT_PROFILES_DIR` na zamontowany profil,
-  zmienne z `.env`, klucz tylko do odczytu), `bash -c` (kilka poleceń naraz),
-  `cd` do zamontowanego projektu, pełna ścieżka do dbt (osobny venv poza
-  `PATH`). Na Macu krótka wersja nie działa, bo dbt czyta `.env` tylko z
-  bieżącego katalogu (`dbt_portfolio/`), a `.env` leży w korzeniu repo; pomaga
-  dowiązanie `ln -s ../.env dbt_portfolio/.env`. W firmie developer ma profil i
-  dostęp skonfigurowane lokalnie (albo dbt Cloud IDE / devcontainer) i pisze
-  `dbt test -s fct_orders`; długa ścieżka to sposób schedulera, nie człowieka.
-- **Skąd wiadomo, że test padł na kompilacji, zanim cokolwiek sprawdził?** (po
-  pierwszym `ERROR`) Trzy sygnały: treść `Compilation Error` (dbt najpierw
-  kompiluje Jinja/YAML do SQL, potem wykonuje SQL w hurtowni — tu SQL nie
-  powstał); czas `0.02s` wobec 0.7–1.1 s pozostałych (za mało na zapytanie do
-  Snowflake'a); wynik `ERROR`, nie `FAIL`. `FAIL n` = test się wykonał i znalazł
-  n złych wierszy (problem w danych); `WARN` = to samo przy `severity: warn`;
-  `ERROR` = testu nie dało się wykonać (kompilacja, brak tabeli, błąd SQL —
-  problem w kodzie/konfiguracji). W firmie od tego zależy, kto reaguje: `FAIL` —
-  zespół danych/właściciel źródła, `ERROR` — autor ostatniej zmiany w kodzie.
-  Lekcja: filtr `grep` zjadł linię z powodem błędu; pełny powód jest w
+**Questions from this step and what they teach:**
+- **What does "the length of the command is the price of running dbt in a container" mean?** (with the
+  test command) The test itself is `dbt test --select fct_orders --target dev`;
+  the rest is getting to dbt in the container: `docker compose exec airflow-scheduler`
+  (there the profile and variables are ready: `DBT_PROFILES_DIR` pointing to the mounted profile,
+  variables from `.env`, the key read-only), `bash -c` (several commands at once),
+  `cd` into the mounted project, the full path to dbt (a separate venv outside
+  `PATH`). On the Mac the short version doesn't work, because dbt reads `.env` only from the
+  current directory (`dbt_portfolio/`), and `.env` sits in the repo root; a
+  symlink `ln -s ../.env dbt_portfolio/.env` helps. In a company a developer has the profile and
+  access configured locally (or the dbt Cloud IDE / a devcontainer) and types
+  `dbt test -s fct_orders`; the long path is the scheduler's way, not a human's.
+- **How do you know the test failed at compilation, before checking anything?** (after
+  the first `ERROR`) Three signals: the text `Compilation Error` (dbt first
+  compiles Jinja/YAML into SQL, then runs the SQL in the warehouse — here the SQL was never
+  produced); the time `0.02s` vs 0.7–1.1 s for the others (too little for a query to
+  Snowflake); the result `ERROR`, not `FAIL`. `FAIL n` = the test ran and found
+  n bad rows (a problem in the data); `WARN` = the same with `severity: warn`;
+  `ERROR` = the test couldn't be run (compilation, a missing table, an SQL error —
+  a problem in the code/configuration). In a company this decides who reacts: `FAIL` —
+  the data team/the source owner, `ERROR` — the author of the latest code change.
+  Lesson: the `grep` filter swallowed the line with the reason for the error; the full reason is in
   `dbt_portfolio/logs/dbt.log`.
-- **Dlaczego `dbt_date:time_zone` = UTC?** Test świeżości porównuje `order_date` z
-  „teraz”; oba muszą być w tej samej strefie, a staging trzyma wszystko w UTC.
-  Strefę biznesu (np. `Europe/Warsaw`) ustawia się, gdy „dzień” w raportach ma
-  się liczyć według czasu klienta.
-- **Czy testy dbt są w ogóle uruchamiane w Snowflake'u?** (po zielonym `dbt
-  test`) Tak, w całości. dbt jest kompilatorem i dyrygentem SQL-a: zamienia
-  test z YAML-a na `SELECT` zwracający ZŁE wiersze, Snowflake wykonuje go na
-  warehouse'ie (kredyty — dlatego po 27.10 testy dbt staną), dbt liczy tylko
-  zwrócone wiersze (0 = `PASS`, n = `FAIL n`/`WARN n`). Skompilowany SQL każdego
-  testu leży w `dbt_portfolio/target/compiled/`. Testy z `store_failures` najpierw
-  zapisują złe wiersze w schemacie `dbt_dev_dbt_test__audit` (`create or replace
-  transient table …`), potem liczą `count(*)` z tej tabeli; unit test tworzy z
-  fixture'ów pustą tabelę tymczasową (`where false limit 0`), żeby poznać typy
-  kolumn. W firmie identycznie — testy danych działają tam, gdzie dane leżą; w
-  odróżnieniu od `validate.py`, który czyta surowe pliki z S3 w Pythonie (bramka
-  przed hurtownią).
-- **Gdzie w Snowflake'u widać, że zapytanie wysłał dbt?** (przy przeglądaniu
-  Query History) Trzy ślady: (1) komentarz doklejany przez dbt na końcu każdego
-  SQL-a: `/* {"app": "dbt", "dbt_version": …, "target_name": "dev", "node_id":
-  "test.dbt_portfolio.…"} */` — `node_id` wskazuje konkretny test/model; (2)
-  CLIENT DRIVER `PythonConnector` (dbt-snowflake) vs `Go` (Snowsight, czyli
-  ręczne zapytania z worksheetu); (3) wspólne SESSION ID zapytań jednego
-  uruchomienia. U nas USER to Twój użytkownik (dbt loguje się Twoim kluczem); w
-  firmie dbt ma użytkownika serwisowego (np. `SVC_DBT`) i `query_tag` w profilu
-  (np. `dbt_prod`), dzięki czemu w Query History i w rozliczeniu kredytów od razu
-  widać, co zużył dbt, a co ludzie (`query_tag` — faza 7). Wyniki zapytań
-  `COUNT(*)` per rola nie są widoczne w historii — do dowodów uruchomić je
-  pojedynczo w worksheecie.
+- **Why `dbt_date:time_zone` = UTC?** The freshness test compares `order_date` with
+  "now"; both must be in the same time zone, and staging keeps everything in UTC.
+  A business time zone (e.g. `Europe/Warsaw`) is set when a "day" in reports should
+  be counted by the customer's time.
+- **Are dbt tests run in Snowflake at all?** (after a green `dbt
+  test`) Yes, entirely. dbt is a compiler and conductor of SQL: it turns a
+  test from YAML into a `SELECT` returning BAD rows, Snowflake runs it on the
+  warehouse (credits — which is why dbt tests will stop after 27.10), and dbt only counts the
+  returned rows (0 = `PASS`, n = `FAIL n`/`WARN n`). The compiled SQL of every
+  test sits in `dbt_portfolio/target/compiled/`. Tests with `store_failures` first
+  write the bad rows into the schema `dbt_dev_dbt_test__audit` (`create or replace
+  transient table …`), then count `count(*)` from that table; a unit test creates from
+  the fixtures an empty temporary table (`where false limit 0`) to learn the column
+  types. In a company it is identical — data tests run where the data lives; unlike
+  `validate.py`, which reads the raw files from S3 in Python (a gate
+  before the warehouse).
+- **Where in Snowflake can you see that a query was sent by dbt?** (while browsing
+  the Query History) Three traces: (1) the comment dbt appends at the end of every
+  SQL statement: `/* {"app": "dbt", "dbt_version": …, "target_name": "dev", "node_id":
+  "test.dbt_portfolio.…"} */` — the `node_id` points to the specific test/model; (2)
+  CLIENT DRIVER `PythonConnector` (dbt-snowflake) vs `Go` (Snowsight, i.e.
+  manual queries from a worksheet); (3) a shared SESSION ID for the queries of one
+  run. For us USER is your user (dbt logs in with your key); in a
+  company dbt has a service user (e.g. `SVC_DBT`) and a `query_tag` in the profile
+  (e.g. `dbt_prod`), so the Query History and the credit billing immediately
+  show what dbt used and what people used (`query_tag` — phase 7). The results of the
+  `COUNT(*)` queries per role aren't visible in the history — for evidence, run them
+  one at a time in the worksheet.
 
-**Następny krok:** commit z testami wypchnięty (24.10); drugi commit w tym samym
-PR: te pytania, `CLAUDE.md` (symulator, `dbt_expectations`, pułapki `dags
-test`, nazwa cheat sheetu) i nowe sekcje cheat sheetu 31.26–31.29 (lokalnie,
-poza repo). Po merge'u, do 26.10: zrzuty dowodów (liczniki `COUNT(*)` per rola
-pojedynczo), README na pytaniach kontrolnych z planu. Po 27.10: `merge_*` tylko
-na plikach bieżącego runu, auto-zamykanie i deduplikacja zadań w Asanie,
-`dagrun_timeout` z alertem DAG-a; faza 7 (CI, Ruff w pre-commit, `dbt deps` w
-CI, `query_tag` i użytkownik serwisowy dla dbt, jeden obraz Airflow, profil
-`dev` w compose).
+**Git 24.10:** the `dbt_expectations` tests merged (#23). A second commit
+(documentation) was made on the same, already merged branch → `git push`
+recreated it on GitHub (`* [new branch]`, "2 commits ahead, 1 behind main").
+Fix: a new branch `docs/6-7-notes` from a fresh `main`, `git cherry-pick` of only the
+documentation commit, deleting the recreated branch locally and on GitHub → PR
+#24. My mistake: I assumed the PR wasn't merged instead of asking.
+
+**Done (6.7, part 3b, 24.10): evidence from Snowflake and the README.**
+- RLS: engineer `COUNT(*) = 206`, `COUNT_IF(country_at_order = 'DE') = 10`;
+  analyst `COUNT(*) = 10` — the sets match (the analyst sees exactly DE).
+- Screenshots in `docs/images/` (6 files, about 1.5 MB): the list of runs, a run after
+  all attempts, the Asana task, RLS engineer/analyst, SCD2 of customers 39 and 51.
+- `README.md` (297 lines): architecture, stack, three control questions with
+  evidence (two runs of the same window, the backfill of 11–13.09 with the conclusion about
+  the cost of `MERGE` on the whole raw layer, the layers detecting silent corruption), a
+  "Design questions" section with the remaining 7 control questions from the plan (Iceberg vs
+  Delta, append-only S3, no Bronze in Snowflake, `MERGE`, the Glue REST catalog,
+  SCD2 in Spark instead of dbt snapshots, "what would you remove in a €5M/year system" — the
+  last one as a working answer for you to correct), the increment from the simulator,
+  governance, running locally, the ADRs, known limitations.
+- `.env.example`: the names of 11 variables with descriptions, without values (missing since phase 0).
+- ADRs moved from the repo root to `docs/adr/` (a plain move, git
+  will show it as a rename) + an index `docs/adr/README.md` (ADR, decision, status).
+  ADR-001 (technology stack) written retrospectively: the decision from the plan of
+  17.09 (AWS + Iceberg + Snowflake + dbt + Airflow instead of the Azure/Databricks work
+  stack, what was deliberately left out, the phase order), marked as recorded on 24.10. References corrected in
+  `README.md` and `CLAUDE.md`; older log entries stay unchanged (history).
+- `CLAUDE.md` pointed to `ADR-002` and `project-summary-for-consultation.md`,
+  which weren't in the repo — both lived only in the project knowledge on claude.ai
+  (17.09), so Claude Code didn't see them. ADR-002 added to the repo with an
+  "Update 2026-10-24" section (implemented: append-only S3 + `MERGE` into Iceberg, no
+  native Bronze; changed: `validate.py` instead of GE, SCD2 in Spark instead of dbt
+  snapshots, windows instead of a watermark; missing: retention policies; known limitation:
+  `MERGE` on the whole raw layer). The planning summary (a PDF from before the build, outdated)
+  stays outside the repo; in `CLAUDE.md` the reference was replaced with `README.md`. The README lists
+  ADR-002.
+
+**Questions from this step and what they teach:**
+- **What does `git cherry-pick` do?** (fixing the branch after a merge) It takes the changes
+  introduced by ONE given commit (the added/removed lines relative to its
+  parent) and applies them to the current branch as a new commit (the same content,
+  a new identifier). It doesn't copy a branch or whole files. The standard way
+  to move a single commit from a branch that has "drifted away".
+- **Why `git push origin --delete`, if `git branch -D` deletes the branch?** `-D`
+  deletes only the local one; the branch on GitHub (here recreated by accident) is deleted
+  only by `push --delete`. Without it, it would hang around with a misleading history, GitHub
+  would offer a PR from it, and `fetch` would bring back `origin/*`.
+- **What does `docs/6-7-notes` mean?** A branch name following a convention: a change-type prefix
+  (as in conventional commits: `feat/`, `fix/`, `docs/`, `test/`, `chore/`) + a
+  short description. In a company usually with a ticket number, e.g. `docs/DE-142-...`; then
+  Jira links the branch and the PR by itself.
+- **What does `-c` in `git switch -c` do?** `--create`: create a branch from the current
+  commit and switch to it (the older form: `git checkout -b`). Without `-c`
+  `switch` only moves to an existing branch.
+- **How is it possible that uncommitted changes "move" to another branch?**
+  A branch is a pointer to a commit, not a folder. The files sit in one shared working
+  tree; `switch` replaces only the files that differ between the two branches' commits and
+  leaves the uncommitted changes. With `switch -c` both branches point to the same
+  commit, so the changes always carry over; when moving to a branch where the
+  changed file looks different, git refuses ("would be overwritten"). In a company:
+  `git stash` → switch → `git stash pop`, or `git worktree` (a second folder
+  with another branch).
+- **Did we delete the run that failed?** No: only test runs were deleted
+  (`manual__2026-10-20`, `manual__2026-10-24`). The run `scheduled__2026-10-22` was
+  cleared after the test (`tasks clear`) and passed, hence `success` today.
+  The trace of the failure: the Asana task, the screenshot with the red task, the logs of attempts 1–4.
+- **Why does customer 51 have only one version, and why is it in the screenshot?** It is a new
+  customer from 23.10 — a first version, with nothing to close. Together with customer 39
+  (an email change: closing the old version + a new one) it shows both SCD2 paths:
+  a new key vs a changed attribute; the third path (no change → `nothing to
+  insert`) follows from the second pass over the window.
+- **Is `project-summary-for-consultation` important?** (when tidying up the
+  references in `CLAUDE.md`) Yes, as the project plan, not as a repo file: a PDF from
+  17.09 in the project knowledge on claude.ai (a consultation before the build). Three
+  things followed from it: there are 10 control questions, not 3 (the README extended);
+  the plan's "wow moment" (a customer changes country → SCD2) we now have on real
+  data (customer 39); `.env.example` was missing (added). It doesn't go into the repo, because
+  it is outdated (dbt snapshots, GE, a different folder structure) and written for the
+  consultation. In a company: planning documents in the team wiki, in the repo the README +
+  ADRs.
+- **Do ADRs have to be in separate files?** (when tidying up the repo) The standard
+  is one file per decision: its own status (`Proposed` → `Accepted` →
+  `Superseded by …`), stable references, git history per decision, every new
+  ADR is a separate PR without conflicts, and old ones are never rewritten. One file
+  (`DECISIONS.md`) appears in small projects as a lightweight decision log.
+  What got in the way was not the format but the clutter in the repo root → `docs/adr/` with an index
+  (that's also what `adr-tools` does and what the plan of 17.09 assumed).
+- **Shouldn't the choice of the technology stack be described somewhere?** (after the
+  README and ADRs were in place) Yes: the README had a stack table (what and for what), but
+  not WHY this stack — the reasoning lived only in the plan outside the repo. That is
+  classic ADR material, so ADR-001 was written retrospectively, with an explicit note
+  that the decision was made earlier and recorded later. In a company this happens
+  whenever a decision exists only in someone's head or an old document; the honest form
+  is a dated ADR, not a back-dated one.
+- **Could we have a diagram of which technology depends on / points to which?** (after
+  ADR-001) Yes: the ASCII sketch in the README replaced with a Mermaid flowchart — six groups
+  (sources, Airflow, processing, AWS, Snowflake, plus dbt and Asana), solid arrows = data
+  flow, dashed = metadata and control (catalog pointer, quality gate, policies, grants,
+  alert), thick = what Airflow runs. Mermaid is "diagram as code": GitHub renders it from
+  text in the Markdown, a change is a few lines in a diff, and there is no PNG that silently
+  goes out of date. In a company the same idea: Mermaid or C4/Structurizr in the repo, or
+  draw.io files versioned next to the code.
+- **Could there also be a picture of the whole architecture with technology logos?** (after
+  the Mermaid diagram) Yes: `docs/diagrams/architecture.py` with the `diagrams` library
+  ("diagram as code" with official vendor icons: PostgreSQL, GitHub, Airflow, Spark, dbt,
+  S3, Glue, Athena, Snowflake) generates `docs/images/architecture.png`, shown at the top of
+  the README's Architecture section; the Mermaid map stays below as the detailed view. Iceberg
+  is drawn as S3 (its tables are files in S3), Asana as a plain node (no icon in the
+  library). Regenerated locally (`brew install graphviz`, `uv add --dev diagrams`), so the
+  picture always comes from the script in the repo. In a company the same: diagrams as code
+  (diagrams, Structurizr/C4, Mermaid) next to the code, rendered in CI or by hand.
+- **Does the README go into `docs/` too?** No: the main `README.md` stays in the root,
+  because GitHub shows it on the repo page. `docs/adr/README.md` is a separate index
+  that GitHub displays when you open the folder — two files with the same name in
+  two places is standard.
+- By the way (the Asana screenshot): the error description in the task is a generic "Bash command
+  failed … exit code 1", without the cause from the log — the callback should attach
+  the last lines of the task log (after 27.10).
+
+**Next step:** commit + PR from `docs/readme` (README, `docs/images/`, `docs/adr/`,
+`.env.example`, `CLAUDE.md`, this entry).
+After 27.10: `merge_*` only on the current run's files, auto-closing and
+deduplication of Asana tasks (with the last log lines in the description), `dagrun_timeout`
+with a DAG-level alert, phase 7 (CI, Ruff in pre-commit, `dbt deps` in
+CI, `query_tag` and a service user for dbt, one Airflow image, a `dev` profile
+in compose).
 
 ---
 
-*Ten plik aktualizuj po każdym większym kroku — kolejność chronologiczna; pytania z rozmowy zapisane z kontekstem (skąd się wzięły) i z wiedzą, której uczą, tak żeby były zrozumiałe po miesiącu; ogólna teoria w cheat sheecie.*
+*Update this file after every bigger step — in chronological order; questions from the conversation recorded with context (where they came from) and with the knowledge they teach, so that they are understandable a month later; general theory goes in the cheat sheet.*
