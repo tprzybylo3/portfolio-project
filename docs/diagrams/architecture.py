@@ -40,7 +40,7 @@ DIAGRAMS_DIR = Path(__file__).resolve().parent
 OUTPUT_FILE = DIAGRAMS_DIR.parent / "images" / "architecture"  # .png is added by the library
 ASANA_LOGO = DIAGRAMS_DIR / "icons" / "asana_logo.png"  # PNG copy of asana_logo.webp (Graphviz cannot read WebP)
 
-GRAPH_ATTR = {"forcelabels": "true", "fontsize": "22", "pad": "0.4", "splines": "spline", "nodesep": "0.5", "ranksep": "0.8"}
+GRAPH_ATTR = {"forcelabels": "true", "fontsize": "22", "pad": "0.4", "splines": "line", "nodesep": "0.5", "ranksep": "0.8"}
 DATA_FLOW = {"color": "#444441"}
 METADATA = {"color": "#888780", "style": "dashed"}
 ORCHESTRATION = {"color": "#534AB7", "style": "bold"}
@@ -90,29 +90,30 @@ with Diagram(
         airflow = Airflow("Airflow 2.9\ndev + prod", group="orchestration_line", **ICON_AT_TOP)
         dbt = Dbt("dbt Core\nmodels + tests", group="orchestration_line", **ICON_AT_TOP)
 
-    if ASANA_LOGO.exists():
-        # wide logo (mark + wordmark), so the node gets a wider box than the default square
-        asana = Custom("incident task", str(ASANA_LOGO), width="2.6")
-    else:
-        asana = Blank("Asana\nincident task")
+    with Cluster("Alerting", graph_attr={**CLUSTER_ATTR, "margin": "12"}):
+        if ASANA_LOGO.exists():
+            # wide logo (mark + wordmark) needs a wider box; the logo itself names the tool
+            asana = Custom("", str(ASANA_LOGO), width="2.2", height="0.8", fixedsize="true")
+        else:
+            asana = Blank("Asana")
 
-    # Platform layer of the finished project (phases 7-8). Remove "(planned)" once built.
+    # CI/CD and infrastructure as code (phases 7-8): the picture shows the finished project.
     with Cluster("CI/CD and IaC", graph_attr=CLUSTER_ATTR):
         # both arrows below are layout-constrained, so Graphviz orders these two nodes to avoid
         # crossing them (Terraform above, its arrow goes up to AWS)
-        terraform = Terraform("Terraform: AWS +\nSnowflake (planned)")
-        github_actions = GithubActions("GitHub Actions\nCI/CD (planned)")
+        terraform = Terraform("Terraform\nAWS + Snowflake")
+        github_actions = GithubActions("GitHub Actions\nCI/CD")
 
     # data flow
     postgres >> Edge(**DATA_FLOW) >> ingestion
     github >> Edge(**DATA_FLOW) >> ingestion
     ingestion >> Edge(**DATA_FLOW) >> raw
     raw >> Edge(**DATA_FLOW) >> spark
-    spark >> Edge(label="MERGE", **DATA_FLOW) >> iceberg_tables
+    spark >> Edge(**DATA_FLOW) >> iceberg_tables
     spark >> Edge(**METADATA) >> glue_catalog
     iceberg_tables >> Edge(**DATA_FLOW) >> athena
     iceberg_tables >> Edge(**DATA_FLOW) >> source_tables
-    glue_catalog >> Edge(label="metadata", **METADATA) >> source_tables
+    glue_catalog >> Edge(**METADATA) >> source_tables
     source_tables >> Edge(**DATA_FLOW) >> staging_views
     staging_views >> Edge(**DATA_FLOW) >> marts
     marts >> Edge(**DATA_FLOW) >> gold
@@ -129,9 +130,9 @@ with Diagram(
     airflow >> Edge(**ORCHESTRATION) >> dbt
     airflow >> Edge(constraint="false", **ORCHESTRATION) >> ingestion
     airflow >> Edge(constraint="false", **ORCHESTRATION) >> spark
-    airflow >> Edge(xlabel="on failure", **METADATA) >> asana
+    airflow >> Edge(**METADATA) >> asana
     # dbt sends SQL to Snowflake, which builds the staging/intermediate views and the marts
-    dbt >> Edge(xlabel="runs SQL", constraint="false", **METADATA) >> staging_views
+    dbt >> Edge(constraint="false", **METADATA) >> staging_views
     dbt >> Edge(constraint="false", **METADATA) >> marts
     github_actions >> Edge(**METADATA) >> airflow
     terraform >> Edge(**METADATA) >> raw
