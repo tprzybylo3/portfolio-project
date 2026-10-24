@@ -3,3 +3,8 @@ packages:
   # `dbt deps`. Used for unique_combination_of_columns on SCD2 staging.
   - package: dbt-labs/dbt_utils
     version: 1.4.1
+  # Pinned exact version, same reason. Great Expectations-style data tests in
+  # dbt (recency, value ranges, regex) on fct_orders -- step 6.7. Maintained
+  # fork of the archived calogica/dbt_expectations; pulls dbt_date as a dependency.
+  - package: metaplane/dbt_expectations
+    version: 0.10.10

@@ -221,6 +221,14 @@ def seed_initial(cursor):
 
 # ---------------------------------------------------------------------------
 # daily mode -- one day of activity, timestamps between today 00:00 UTC and now
+#
+# Note on UPDATEs: the source tables have a BEFORE UPDATE trigger
+# (set_updated_at in sql/ddl.sql) that sets updated_at = now(). The changed_at
+# passed to UPDATE statements below is therefore overwritten: a changed row's
+# updated_at (and so the SCD2 valid_from Spark derives from it) is the moment
+# this script runs, like in a real application. The random times only take
+# effect on INSERTs (new customers, orders, items, payments) and in
+# order_status_history.changed_at, which has no trigger.
 # ---------------------------------------------------------------------------
 
 def todays_event_times(count: int, day_start: datetime, now: datetime) -> list[datetime]:
