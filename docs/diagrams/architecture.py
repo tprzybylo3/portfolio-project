@@ -130,7 +130,9 @@ with Diagram(
     # its own invisible column, which pushed the Snowflake icons apart unevenly; an xlabel is
     # attached to the arrow without taking a column
     airflow >> Edge(**ORCHESTRATION) >> dbt
-    airflow >> Edge(constraint="false", **ORCHESTRATION) >> ingestion
+    # into the bottom of ingestion: the straight line then passes under the Raw frame
+    # instead of through the "S3 raw" label
+    airflow >> Edge(constraint="false", headport="s", **ORCHESTRATION) >> ingestion
     airflow >> Edge(constraint="false", **ORCHESTRATION) >> spark
     airflow >> Edge(**METADATA) >> asana
     # dbt sends SQL to Snowflake, which builds the staging/intermediate views and the marts
