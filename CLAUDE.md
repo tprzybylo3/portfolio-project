@@ -18,7 +18,7 @@ look for it). Step-by-step build history with Q&A: `PROGRESS_LOG.md` (local only
 in the public repo). General
 theory with examples (not specific to this project): the newest
 `DE_Interview_Cheatsheet-<n>.docx` (local only; every version ignored via
-`.gitignore` pattern `DE_Interview_Cheatsheet*.docx`; currently `-3`).
+`.gitignore` pattern `DE_Interview_Cheatsheet*.docx`; currently `-4`).
 
 ## State at the start of this phase
 
