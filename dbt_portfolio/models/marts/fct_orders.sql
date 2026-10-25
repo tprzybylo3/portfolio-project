@@ -12,6 +12,9 @@
     dbt runs post_hooks BEFORE applying grants, so portfolio_analyst never
     gets SELECT on a copy without the policies.
 
+    Data metric functions (step 6.8) are re-attached the same way; they run
+    daily after the nightly build, also when the pipeline did not run.
+
     country_at_order: point-in-time match to the customer version effective
     at order_date (int_customer_versions; first version backdated to
     1900-01-01, see that model). current_country: today's version.
@@ -30,6 +33,12 @@
         post_hook=[
             "ALTER ICEBERG TABLE {{ this }} ADD ROW ACCESS POLICY portfolio_governance.policies.country_rls ON (country_at_order)",
             "ALTER ICEBERG TABLE {{ this }} MODIFY COLUMN current_country SET MASKING POLICY portfolio_governance.policies.country_mask",
+            "ALTER ICEBERG TABLE {{ this }} SET DATA_METRIC_SCHEDULE = 'USING CRON 0 2 * * * UTC'",
+            "ALTER ICEBERG TABLE {{ this }} ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.ROW_COUNT ON () EXPECTATION has_rows (VALUE > 0)",
+            "ALTER ICEBERG TABLE {{ this }} ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.DUPLICATE_COUNT ON (order_id) EXPECTATION unique_order_id (VALUE = 0)",
+            "ALTER ICEBERG TABLE {{ this }} ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (country_at_order) EXPECTATION country_present (VALUE = 0)",
+            "ALTER ICEBERG TABLE {{ this }} ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NEGATIVE_COUNT ON (gross_order_value) EXPECTATION no_negative_value (VALUE = 0)",
+            "ALTER ICEBERG TABLE {{ this }} ADD DATA METRIC FUNCTION portfolio_governance.data_quality.hours_since_latest ON (order_date) EXPECTATION fresh_within_48h (VALUE <= 48)",
         ]
     )
 }}
