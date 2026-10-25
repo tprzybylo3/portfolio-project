@@ -314,9 +314,9 @@ authenticates with a private key), a GitHub token, optionally an Asana token.
 
 3. In the Airflow UI, enable the `ecommerce_pipeline` and `source_simulator` DAGs.
 
-AWS objects (bucket, Glue) and Snowflake objects (catalog integration, roles,
-policies — scripts in `snowflake/`) are created manually for now; Terraform is
-planned.
+Snowflake objects are created by the scripts in `snowflake/`, starting with
+`00_account_setup.sql` (run order in its header). AWS objects (bucket, IAM roles,
+Glue) are created manually for now; Terraform is planned.
 
 ## Repository layout
 

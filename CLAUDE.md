@@ -220,8 +220,8 @@ dbt_portfolio/
 ## Secrets — how dbt connects to Snowflake
 
 **Never hardcode a password/key in `profiles.yml` or anywhere in the repo.**
-Auth for the service account is **key-pair** (cheat sheet 14.4), not a
-password. The real `profiles.yml` lives at `~/.dbt/profiles.yml` (outside the
+dbt connects as the user's own Snowflake user (no dedicated service user yet —
+phase 7) with **key-pair** auth (cheat sheet 14.4), not a password. The real `profiles.yml` lives at `~/.dbt/profiles.yml` (outside the
 repo) and reads environment variables (`DBT_SNOWFLAKE_*`). The agent's shell
 does not have them: the user runs `dbt run`/`dbt test` and pastes the result.
 The repo contains only `profiles.yml.example` with placeholders.
