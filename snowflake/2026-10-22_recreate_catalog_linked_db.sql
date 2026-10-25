@@ -32,6 +32,11 @@ CREATE DATABASE PORTFOLIO_ECOMMERCE_DB
 -- 3. Policies BEFORE grants (the analyst must never see customer unprotected)
 ALTER ICEBERG TABLE portfolio_ecommerce_db."portfolio_ecommerce"."customer"
   MODIFY COLUMN "email" SET MASKING POLICY portfolio_governance.policies.email_mask;
+-- first/last name: IDENTIFIER per SYSTEM$CLASSIFY (2026-10-25)
+ALTER ICEBERG TABLE portfolio_ecommerce_db."portfolio_ecommerce"."customer"
+  MODIFY COLUMN "first_name" SET MASKING POLICY portfolio_governance.policies.name_mask;
+ALTER ICEBERG TABLE portfolio_ecommerce_db."portfolio_ecommerce"."customer"
+  MODIFY COLUMN "last_name" SET MASKING POLICY portfolio_governance.policies.name_mask;
 ALTER ICEBERG TABLE portfolio_ecommerce_db."portfolio_ecommerce"."customer"
   ADD ROW ACCESS POLICY portfolio_governance.policies.country_rls ON ("country");
 

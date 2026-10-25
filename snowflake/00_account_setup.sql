@@ -49,6 +49,13 @@ CREATE OR REPLACE MASKING POLICY portfolio_governance.policies.email_mask
     ELSE REGEXP_REPLACE(val, '^[^@]+', '***')
   END;
 
+CREATE OR REPLACE MASKING POLICY portfolio_governance.policies.name_mask
+  AS (val VARCHAR) RETURNS VARCHAR ->
+  CASE
+    WHEN CURRENT_ROLE() IN ('PORTFOLIO_ENGINEER', 'ACCOUNTADMIN') THEN val
+    ELSE '***'
+  END;
+
 -- external volumes: silver read-only, gold writable (Snowflake-managed Iceberg marts)
 CREATE EXTERNAL VOLUME IF NOT EXISTS portfolio_ecommerce_ext_vol
   STORAGE_LOCATIONS = ((
