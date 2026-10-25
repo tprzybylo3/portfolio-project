@@ -196,10 +196,18 @@ Several layers, because data goes wrong "quietly" in different ways:
 | a format change at the source that breaks permissions | `dbt_expectations`: country code `^[A-Z]{2}$` (RLS filters on this value) |
 | value anomalies | `dbt_expectations`: `gross_order_value` between 0 and 10,000 |
 | technical failure | retries → Asana task after the last attempt |
+| **the whole pipeline stops** (no Airflow run, so no dbt tests either) | Snowflake data metric functions on `fct_orders`, evaluated by Snowflake itself daily at 02:00 UTC: hours since the newest order ≤ 48 (custom DMF), row count > 0, no duplicate `order_id`, no missing country, no negative value |
+| personal data nobody listed | `SYSTEM$CLASSIFY` on `customer`: flagged first and last name as identifiers next to the already masked e-mail → masked too |
 
 dbt tests run inside Snowflake: dbt compiles each test into a query that returns
-the bad rows (0 rows = pass). Last run: `PASS=20` for `fct_orders`, `PASS=69` for
+the bad rows (0 rows = pass). Last run: `PASS=21` for `fct_orders`, `PASS=69` for
 the whole project.
+
+dbt tests check the data when the pipeline builds it; the data metric functions check
+it in the warehouse on their own schedule — the only layer that notices a pipeline that
+stopped. They are attached by dbt `post_hook`s (the table is rebuilt every night) and run
+as the table owner, which the row access policy does not restrict; owned by a restricted
+role they would silently measure only the rows the policy lets through.
 
 ## Design questions
 
@@ -257,6 +265,15 @@ time.
 - Asana as the alert target → an on-call tool (PagerDuty / Opsgenie) plus ticketing;
 - the source simulator, obviously.
 
+**How are time zones handled?** Every timestamp is a point in time: `TIMESTAMPTZ` in
+Postgres, `timestamptz` in the Iceberg silver tables; extraction windows and Airflow data
+intervals are in UTC; dbt staging converts every timestamp explicitly with
+`CONVERT_TIMEZONE('UTC', …)::TIMESTAMP_NTZ`, so the marts are in UTC. What is not stored
+is the local time of the event: 22:52 UTC is already the next day for a customer in
+Poland. Reports by the customer's day or a model predicting when people buy would need
+the order's time zone recorded at the source (`order_timezone`) — the customer's country
+is not enough (multi-zone countries, travel).
+
 ## Real increment through the pipeline
 
 The source simulator (`scripts/seed.py --mode daily`, a separate DAG
@@ -290,10 +307,12 @@ from DE); the analyst sees only those 10:
 |---|---|
 | ![Engineer: 206 orders, 10 from DE](docs/images/snowflake_rls_engineer.png) | ![Analyst: 10 orders](docs/images/snowflake_rls_analyst.png) |
 
-The policies (`country_rls` on the country at order time, a mask on the customer's
-current country, an email mask on `customer`) are attached by a dbt `post_hook` on
-every rebuild of the mart, before grants are applied — the analyst never gets a copy
-of the table without its policies.
+On `fct_orders`, `country_rls` (on the country at order time) and a mask on the
+customer's current country are attached by a dbt `post_hook` on every rebuild of the
+mart, before grants are applied — the analyst never gets a copy of the table without
+its policies. On the silver `customer` table, masks on the e-mail and on the first and
+last name (the names were flagged by Snowflake's sensitive data classification) are
+attached by the scripts in `snowflake/`.
 
 ## Running it locally
 
@@ -349,7 +368,8 @@ All ADRs live in [`docs/adr/`](docs/adr/) (index with status per decision).
 
 - `MERGE` reads the whole raw layer instead of the current run's files — to fix before a large backfill.
 - The Asana alert is one-way: no automatic closing or deduplication, and the description carries a generic error instead of the cause from the task log.
-- No `dagrun_timeout` — a stuck run is only caught by the freshness test.
+- No `dagrun_timeout` — a stuck run is caught only by the freshness checks (dbt test, daily DMF).
+- Marts keep timestamps as `TIMESTAMP_NTZ` in UTC ("every NTZ is UTC" is a convention, not the type); the local time of an order is not stored.
 - Airflow runs locally (only while the machine is awake); every Airflow service builds its own identical image.
 - Next: CI/CD (GitHub Actions: lint, DAG import test, `dbt deps`, slim CI for dbt), Terraform for AWS and Snowflake, observability.
 
