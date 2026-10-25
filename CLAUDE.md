@@ -95,6 +95,17 @@ theory with examples (not specific to this project): the newest
   same tasks too) and occupies its logical date (a manual run dated D blocks
   the scheduled run for D). Don't suggest it for dates the scheduler will own;
   prefer backfill/Clear for closed days.
+- Step 6.8 (25.10, in progress): Snowflake-native data quality before the trial
+  ends — profiling, data metric functions (DMFs) with expectations on
+  `fct_orders`, PII classification. Snowflake objects are created by SQL
+  scripts in `snowflake/` (the UI only to look at results), never clicked.
+- Snowflake trial ends 2026-10-27: after that every task touching Snowflake
+  (dbt, catalog-linked reads) fails. `ecommerce_pipeline` in dev gets paused
+  so it does not open an Asana incident every night. Next after the trial:
+  Asana alert v2 (deduplication, auto-close on recovery, concrete message with
+  task, run_id, try number, exception and log link), then `merge_*` on the
+  current run's files, `dagrun_timeout`, phase 7 (CI).
+- `PROGRESS_LOG.md` is local only (git-ignored, not in the public repo).
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)
 
