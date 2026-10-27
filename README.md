@@ -195,7 +195,7 @@ Several layers, because data goes wrong "quietly" in different ways:
 | **pipeline is "green" but no new data arrives** | `dbt_expectations`: freshness of `fct_orders` (≤ 2 days) + source freshness |
 | a format change at the source that breaks permissions | `dbt_expectations`: country code `^[A-Z]{2}$` (RLS filters on this value) |
 | value anomalies | `dbt_expectations`: `gross_order_value` between 0 and 10,000 |
-| technical failure | retries → Asana task after the last attempt |
+| technical failure | retries → one Asana incident per failing task after the last attempt (the script's own error from the log, further failures as comments, closed automatically by the next green run) |
 
 dbt tests run inside Snowflake: dbt compiles each test into a query that returns
 the bad rows (0 rows = pass). Last run: `PASS=20` for `fct_orders`, `PASS=69` for
@@ -348,7 +348,7 @@ All ADRs live in [`docs/adr/`](docs/adr/) (index with status per decision).
 ## Known limitations and next steps
 
 - `MERGE` reads the whole raw layer instead of the current run's files — to fix before a large backfill.
-- The Asana alert is one-way: no automatic closing or deduplication, and the description carries a generic error instead of the cause from the task log.
+- Spark steps start a container, JVM and session each (fixed overhead of tens of seconds per step); a long-running Spark Connect server is the planned improvement, after the `MERGE` fix.
 - No `dagrun_timeout` — a stuck run is only caught by the freshness test.
 - Airflow runs locally (only while the machine is awake); every Airflow service builds its own identical image.
 - Next: CI/CD (GitHub Actions: lint, DAG import test, `dbt deps`, slim CI for dbt), Terraform for AWS and Snowflake, observability.

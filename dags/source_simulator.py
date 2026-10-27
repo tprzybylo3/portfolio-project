@@ -25,7 +25,7 @@ import yaml
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 
-from alerting.asana import create_asana_incident  # dags/ is on sys.path
+from alerting.asana import close_recovered_incidents, report_task_failure  # dags/ is on sys.path
 
 SCRIPTS_DIR = "/opt/airflow/scripts"  # bind-mounted from ./scripts (docker-compose.yml)
 PIPELINE_ENV = os.environ.get("PIPELINE_ENV", "dev")
@@ -40,12 +40,13 @@ with DAG(
     start_date=pendulum.datetime(2026, 10, 23, tz="UTC"),
     catchup=False,  # events are stamped with NOW: catching up past days would make no sense
     max_active_runs=1,
+    on_success_callback=close_recovered_incidents,
     default_args={
         "retries": RETRY_CONFIG["count"],  # safe: one transaction + idempotent per day
         "retry_delay": timedelta(seconds=RETRY_CONFIG["delay_seconds"]),
         "retry_exponential_backoff": True,
         "max_retry_delay": timedelta(seconds=RETRY_CONFIG["max_delay_seconds"]),
-        "on_failure_callback": create_asana_incident,
+        "on_failure_callback": report_task_failure,
     },
     tags=["portfolio", "phase-6", "source", f"env:{PIPELINE_ENV}"],
 ) as dag:
