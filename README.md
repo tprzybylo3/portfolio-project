@@ -195,7 +195,7 @@ Several layers, because data goes wrong "quietly" in different ways:
 | **pipeline is "green" but no new data arrives** | `dbt_expectations`: freshness of `fct_orders` (≤ 2 days) + source freshness |
 | a format change at the source that breaks permissions | `dbt_expectations`: country code `^[A-Z]{2}$` (RLS filters on this value) |
 | value anomalies | `dbt_expectations`: `gross_order_value` between 0 and 10,000 |
-| technical failure | retries → Asana task after the last attempt |
+| technical failure | retries → one Asana incident per failing task after the last attempt (the script's own error from the log, further failures as comments, closed automatically by the next green run) |
 | **the whole pipeline stops** (no Airflow run, so no dbt tests either) | Snowflake data metric functions on `fct_orders`, evaluated by Snowflake itself daily at 02:00 UTC: hours since the newest order ≤ 48 (custom DMF), row count > 0, no duplicate `order_id`, no missing country, no negative value |
 | personal data nobody listed | `SYSTEM$CLASSIFY` on `customer`: flagged first and last name as identifiers next to the already masked e-mail → masked too |
 
@@ -208,6 +208,12 @@ it in the warehouse on their own schedule — the only layer that notices a pipe
 stopped. They are attached by dbt `post_hook`s (the table is rebuilt every night) and run
 as the table owner, which the row access policy does not restrict; owned by a restricted
 role they would silently measure only the rows the policy lets through.
+
+![Snowflake data quality of fct_orders: 5 of 5 checks passing, daily schedule](docs/images/snowflake_dmf_overview.png)
+![Snowflake data quality of fct_orders: the result of every check](docs/images/snowflake_dmf_results.png)
+*Data quality tab of `fct_orders` after the 02:00 UTC evaluation: 234 rows (all of them — the
+owner's view, not the analyst's), no missing country, no duplicate order ID, no negative value,
+newest order 5 hours old.*
 
 ## Design questions
 
@@ -367,7 +373,7 @@ All ADRs live in [`docs/adr/`](docs/adr/) (index with status per decision).
 ## Known limitations and next steps
 
 - `MERGE` reads the whole raw layer instead of the current run's files — to fix before a large backfill.
-- The Asana alert is one-way: no automatic closing or deduplication, and the description carries a generic error instead of the cause from the task log.
+- Spark steps start a container, JVM and session each (fixed overhead of tens of seconds per step); a long-running Spark Connect server is the planned improvement, after the `MERGE` fix.
 - No `dagrun_timeout` — a stuck run is caught only by the freshness checks (dbt test, daily DMF).
 - Marts keep timestamps as `TIMESTAMP_NTZ` in UTC ("every NTZ is UTC" is a convention, not the type); the local time of an order is not stored.
 - Airflow runs locally (only while the machine is awake); every Airflow service builds its own identical image.

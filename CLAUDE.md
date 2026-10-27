@@ -70,9 +70,13 @@ theory with examples (not specific to this project): the newest
   `max_retry_delay` and per-stage `execution_timeout` come from
   `config/<env>.yaml` (`retries`, `execution_timeout_minutes`);
   `validate_raw` and `has_new_rows` have `retries=0` (deterministic failures).
-  `on_failure_callback` (after the LAST attempt) creates an Asana task:
-  `dags/alerting/asana.py` (env `ASANA_TOKEN`, `ASANA_PROJECT_ID`; never
-  raises). `dags/.airflowignore` keeps helper modules out of DAG parsing.
+  Asana alerting (`dags/alerting/asana.py`, v2 since 27.10): `report_task_failure`
+  (on_failure_callback, after the LAST attempt) opens one incident per
+  `[env] dag.task` or comments on the open one, with the script's own error
+  from the task log; `close_recovered_incidents` (DAG on_success_callback)
+  completes open incidents. Env `ASANA_TOKEN`, `ASANA_PROJECT_ID`; never raises.
+  Testing a failure: `airflow tasks clear … --downstream` (without it the old
+  green leaves make the run "success"). `dags/.airflowignore` keeps helper modules out of DAG parsing.
 - Do NOT change existing `task_id`s (incl. moving tasks into/out of a
   TaskGroup, which prefixes the id): with `depends_on_past=True` the next run
   waits forever for an instance that never existed — a silent stall, no
@@ -102,9 +106,7 @@ theory with examples (not specific to this project): the newest
 - Snowflake trial ends 2026-10-27: after that every task touching Snowflake
   (dbt, catalog-linked reads) fails. `ecommerce_pipeline` in dev gets paused
   so it does not open an Asana incident every night. Next after the trial:
-  Asana alert v2 (deduplication, auto-close on recovery, concrete message with
-  task, run_id, try number, exception and log link), then `merge_*` on the
-  current run's files, `dagrun_timeout`, phase 7 (CI).
+  `merge_*` on the current run's files (then Spark Connect, measured), `dagrun_timeout`, phase 7 (CI).
 - `PROGRESS_LOG.md` is local only (git-ignored, not in the public repo).
 
 ## Decisions binding for this phase (don't renegotiate without asking the user)

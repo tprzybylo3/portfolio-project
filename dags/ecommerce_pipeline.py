@@ -46,7 +46,8 @@ Design notes:
   errors (network, API, Iceberg commit conflict); tasks whose failure is
   deterministic (validate_raw gate, has_new_rows) get retries=0. Every task is
   idempotent, so a retry is safe. After the last failed attempt
-  on_failure_callback opens an Asana task (dags/alerting/asana.py).
+  on_failure_callback opens or updates an Asana incident; a successful run
+  closes the open ones (dags/alerting/asana.py).
 """
 
 import os
@@ -62,7 +63,7 @@ from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.utils.task_group import TaskGroup
 from docker.types import Mount
 
-from alerting.asana import create_asana_incident  # dags/ is on sys.path
+from alerting.asana import close_recovered_incidents, report_task_failure  # dags/ is on sys.path
 
 SCRIPTS_DIR = "/opt/airflow/scripts"  # bind-mounted from ./scripts (docker-compose.yml)
 HOST_PROJECT_DIR = os.environ.get("HOST_PROJECT_DIR", "")  # repo path on the HOST, for DockerOperator mounts
@@ -133,6 +134,7 @@ with DAG(
     start_date=pendulum.datetime(2026, 9, 1, tz="UTC"),
     catchup=False,  # backfill is done explicitly (step 6.6), not on DAG enable
     max_active_runs=1,  # runs go in order: SCD2 versions and logs stay readable
+    on_success_callback=close_recovered_incidents,  # a green run closes open Asana incidents
     default_args={
         "depends_on_past": True,  # day N waits for a successful (or skipped) day N-1
         # Step 6.5: retry transient errors with growing pauses, then alert once.
@@ -140,7 +142,7 @@ with DAG(
         "retry_delay": timedelta(seconds=RETRY_CONFIG["delay_seconds"]),
         "retry_exponential_backoff": True,  # pause doubles per attempt (+ deterministic jitter)
         "max_retry_delay": timedelta(seconds=RETRY_CONFIG["max_delay_seconds"]),
-        "on_failure_callback": create_asana_incident,  # only after the LAST attempt
+        "on_failure_callback": report_task_failure,  # only after the LAST attempt
     },
     tags=["portfolio", "phase-6", f"env:{PIPELINE_ENV}"],
 ) as dag:
